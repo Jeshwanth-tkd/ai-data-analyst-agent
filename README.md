@@ -10,6 +10,11 @@ every piece rather than scaffolding it all at once.
 **🔗 Live demo:** https://ai-data-analyst-agent-j2hnysterzf5yhjhathkqe.streamlit.app/
 *(Free-tier hosting — if the app shows a "wake up" screen, it just went to sleep from inactivity; one click and it's back in ~15 seconds.)*
 
+## Screenshots
+
+![Upload screen with insights](screenshots/upload.png)
+![Insights and generated charts](screenshots/results.png)
+![Chart detail](screenshots/charts.png)
 
 ## Results
 
