@@ -1,0 +1,11 @@
+# Keep the Docker build fast and the image small by excluding files the
+# backend container never needs.
+
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.env
+.pytest_cache/
+outputs/*.png
