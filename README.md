@@ -43,7 +43,20 @@ itself isn't built until Phase 4.
   (`GROQ_API_KEY`) without exposing any real secret.
 - Git repo initialized and pushed to GitHub.
 
-### Phase 2 — Core CSV ingestion (next)
+### Phase 2 — Core CSV ingestion ✅
+- `app/ingestion/csv_profiler.py` added: `load_csv()` safely reads a CSV
+  (clear errors on missing/empty/malformed files), and `profile_dataframe()`
+  turns a DataFrame into a compact profile dict — shape, per-column dtype,
+  null counts, unique counts, duplicate row count, and a few sample rows.
+- Deliberately built by hand instead of using an auto-EDA library
+  (e.g. `ydata-profiling`) — this profiling logic is what the LLM will
+  reason over in Phase 3, so we need full control over its shape and content.
+- Profile is a plain `dict` rather than a custom class, since it needs to
+  convert cleanly to JSON/text for the LLM prompt in the next phase.
+- Added `data/samples/sample_sales.csv`, a small sample dataset (10 rows,
+  a few intentional missing values) used to manually verify the profiler.
+
+### Phase 3 — LLM connection (next)
 Not started yet.
 
 ## Tech stack
