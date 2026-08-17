@@ -40,6 +40,8 @@ Rules you must follow exactly:
   print("INSIGHT: Electronics has the highest average price at $34.20")
   Do not print anything else that starts with "INSIGHT: " — only genuine findings.
 - If you create a chart, save it with plt.savefig("outputs/chart_1.png") for the first chart, "outputs/chart_2.png" for the second, and so on. Do not call plt.show().
+- If a chart's x-axis has more than ~6 labels (e.g. many dates, or many category names), rotate them so they don't overlap: plt.xticks(rotation=45, ha="right").
+- Always call plt.tight_layout() right before plt.savefig(...) so axis labels and titles never get cut off or run into each other.
 - Respond with ONLY a single fenced Python code block, like this:
 ```python
 # your code here
