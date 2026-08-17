@@ -75,7 +75,28 @@ itself isn't built until Phase 4.
   own machine.
 - Added `groq` and `python-dotenv` to `requirements.txt`.
 
-### Phase 4 — Code execution loop (next)
+### Phase 4 — Code execution loop ✅ (the agentic core)
+- `app/executor/code_executor.py` added: `run_code()` executes LLM-generated
+  code in an isolated **subprocess** (not `exec()` in-process) — a crash
+  only kills that subprocess, and a hang gets force-killed after a
+  15-second timeout. Chosen over `exec()` for real crash/hang isolation,
+  and over Docker for staying free and simple enough to build and explain
+  at this stage (Docker-based sandboxing noted as a future improvement).
+- `run_with_self_correction()` is the actual agent loop: generate code →
+  run it → if it fails, send the exact error message back to the LLM,
+  get corrected code, retry — up to 3 retries (4 attempts total) before
+  honestly reporting failure. Every attempt (code, success/fail, output)
+  is kept in a history list for transparency/debugging.
+- `llm_client.py` extended: `generate_analysis_code()` now optionally
+  accepts `previous_code` + `error_message` to build a "fix this" prompt
+  instead of a fresh one — same API call, different message depending
+  on whether this is a first attempt or a retry.
+- Verified locally with hand-written test cases before relying on live
+  LLM output: a successful run, a deliberate `NameError`, and a deliberate
+  infinite loop — confirming success capture, error capture, and the
+  timeout kill-switch all work correctly.
+
+### Phase 5 — Insight & chart generation (next)
 Not started yet.
 
 ## Tech stack

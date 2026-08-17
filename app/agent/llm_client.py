@@ -54,17 +54,48 @@ def _extract_code(raw_response: str) -> str:
     return raw_response.strip()
 
 
-def generate_analysis_code(profile: dict) -> str:
-    """
-    Send a dataset profile to the LLM and return the Python analysis
-    code it writes back, as a plain string (not yet executed).
-    """
-    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-    user_message = (
+def _build_initial_message(profile: dict) -> str:
+    return (
         "Here is the profile of the dataset (already loaded as `df`):\n\n"
         f"{json.dumps(profile, indent=2, default=str)}"
     )
+
+
+def _build_fix_message(profile: dict, previous_code: str, error_message: str) -> str:
+    return (
+        "The Python code below was written to analyze the dataset profile shown "
+        "further down, but it failed when it was actually run. Fix the code so it "
+        "runs successfully, while still following all of your original rules.\n\n"
+        f"Code that failed:\n```python\n{previous_code}\n```\n\n"
+        f"Error message it produced:\n{error_message}\n\n"
+        f"Dataset profile (already loaded as `df`):\n"
+        f"{json.dumps(profile, indent=2, default=str)}\n\n"
+        "Respond with ONLY the corrected, fenced Python code block."
+    )
+
+
+def generate_analysis_code(
+    profile: dict,
+    previous_code: str = None,
+    error_message: str = None,
+) -> str:
+    """
+    Send a dataset profile to the LLM and return the Python analysis
+    code it writes back, as a plain string (not yet executed).
+
+    Normally called with just `profile` for a fresh attempt. When called
+    with `previous_code` and `error_message` set (by the self-correction
+    loop in Phase 4's executor), it instead asks the model to fix code
+    that already failed — this is the same function doing double duty
+    for both "write code" and "fix code", since the API call itself is
+    identical; only the message we send differs.
+    """
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
+    if previous_code and error_message:
+        user_message = _build_fix_message(profile, previous_code, error_message)
+    else:
+        user_message = _build_initial_message(profile)
 
     response = client.chat.completions.create(
         model=MODEL,
