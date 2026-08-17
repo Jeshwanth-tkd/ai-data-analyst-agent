@@ -163,7 +163,28 @@ itself isn't built until Phase 4.
   rather than specifically engineered around — a good example of an
   honest limitation for the final write-up (Phase 11).
 
-### Phase 7 — Backend API (next)
+### Phase 7 — Backend API ✅
+- `main.py` added: a FastAPI app with two endpoints — `GET /` (health
+  check) and `POST /analyze` (accepts an uploaded CSV, runs the full
+  agent pipeline, returns JSON). Deliberately thin: it just saves the
+  upload to a temp file and calls Phase 6's `analyze_csv_file()` —
+  virtually no new logic, since the hardened pipeline already existed.
+- Chart images are served as static files (`app.mount("/charts", ...)`)
+  rather than base64-encoded into the JSON response — keeps the main
+  response small and fast, and is the standard REST pattern for serving
+  generated files. `/analyze`'s response converts local paths like
+  `outputs/chart_1.png` into fetchable URLs like `/charts/chart_1.png`.
+- Verified locally (server started, hit with `curl`, and a static image
+  request confirmed a real PNG came back) before relying on manual
+  browser testing.
+- Free interactive API docs at `/docs` (built into FastAPI) used to
+  test the full upload → analyze → JSON flow — confirmed working
+  end-to-end with real chart images served back correctly.
+- New dependencies: `fastapi`, `uvicorn` (the server that actually runs
+  a FastAPI app), `python-multipart` (required specifically for file
+  upload support).
+
+### Phase 8 — Frontend (next)
 Not started yet.
 
 ## Tech stack

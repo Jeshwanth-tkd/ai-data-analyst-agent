@@ -2,3 +2,6 @@ pandas
 groq
 python-dotenv
 matplotlib
+fastapi
+uvicorn
+python-multipart
