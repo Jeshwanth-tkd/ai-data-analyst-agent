@@ -207,7 +207,36 @@ itself isn't built until Phase 4.
 - Confirmed working end-to-end: real CSV upload → live LLM analysis →
   insights and both chart images rendering correctly on the page.
 
-### Phase 9 — Testing (next)
+### Phase 9 — Testing ✅
+- Added two new sample datasets in different domains (`employee_hr.csv`,
+  `movie_ratings.csv`, 200 rows each) alongside the original sales data,
+  to test that the agent generalizes rather than being tuned to one
+  dataset shape.
+- `tests/benchmark_agent.py` times the agent's actual elapsed time
+  (profile → LLM → execute → self-correct if needed) on all three.
+- Built an honest human-timing methodology, since I can't fabricate a
+  manual-EDA baseline: `tests/manual_eda_checklist.md` (a fixed 8-step
+  checklist matching the categories of analysis the agent produces, so
+  the comparison is fair) and `tests/manual_eda_timer.py` (a wall-clock
+  stopwatch measuring real elapsed time — including thinking and typing,
+  not just code execution, since that's what "time saved" has to mean
+  for a real human doing this for the first time).
+- **Measured result (single dataset, single trial, `employee_hr.csv`):
+  agent completed the analysis in 6.5s vs. 3.7 minutes (224s) doing the
+  same checklist manually — a 97.1% reduction in personal analysis time
+  on that dataset.** Full numbers and honest caveats about scope (one
+  dataset, one trial, one person) are in `tests/benchmark_results.md` —
+  written deliberately to avoid overclaiming this as a general/validated
+  statistic.
+- Rejected citing a generic published "time saved" statistic instead of
+  measuring it: researched the commonly-cited "80% of a data scientist's
+  time is spent cleaning data" claim and found it (a) measures something
+  different — share of overall project time, not per-dataset EDA time —
+  and (b) is itself a contested, frequently-disputed figure. Using it
+  here would have meant borrowing a shaky number to describe something
+  it wasn't measuring.
+
+### Phase 10 — Deployment (next)
 Not started yet.
 
 ## Tech stack
