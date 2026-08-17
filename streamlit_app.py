@@ -1,23 +1,35 @@
 """
 Phase 8: Frontend.
+Phase 10 pivot: this file used to talk to a separately-hosted FastAPI
+backend over HTTP (`requests.post(...)`). It now calls the agent
+pipeline directly, in the same process, by importing
+`analyze_csv_file()` from app/output/insights.py.
 
-A Streamlit UI that talks to the Phase 7 FastAPI backend over real HTTP
-requests -- this file has no direct knowledge of pandas, Groq, or any
-agent internals. It only knows how to upload a file to /analyze and
-render whatever JSON comes back. That separation is the whole point:
-the backend could be swapped, redeployed, or called by something other
-than this UI, and this file wouldn't need to change.
+Why the change: Phase 10 needed a genuinely free, no-credit-card,
+persistent host for the FastAPI backend as a *second* service alongside
+Streamlit. Hugging Face Spaces turned out to require a paid plan for
+Docker Spaces (discovered live, contradicting earlier research), and
+Vercel -- while free -- runs FastAPI as stateless serverless functions,
+which is incompatible with our chart-serving design (one request saves
+a chart file, a second request fetches it -- they could land on
+different ephemeral containers with no shared disk). Running everything
+as a single Streamlit app sidesteps both problems: there's only one
+process, one filesystem, and one free host (Streamlit Community Cloud).
+
+The tradeoff: this file now has direct knowledge of the agent's
+internals (it imports from `app.*`), so it's no longer a thin,
+swappable frontend the way it was talking to a backend over HTTP. For a
+solo portfolio project favoring "actually deployed and free" over
+"perfectly decoupled services," that's a reasonable trade -- and it's
+worth being able to explain *why* in an interview.
 """
 
 import os
+import tempfile
 
-import requests
 import streamlit as st
 
-# Reads from an environment variable so this can point at a deployed
-# backend later (Phase 10) without editing code -- defaults to your
-# local FastAPI server for now.
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
+from app.output.insights import analyze_csv_file
 
 st.set_page_config(page_title="AI Data Analyst Agent", page_icon="📊")
 
@@ -39,22 +51,26 @@ if uploaded_file is not None and st.button("Analyze"):
         "running it, and self-correcting if it fails. This can take "
         "10-30 seconds..."
     ):
-        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "text/csv")}
+        # analyze_csv_file() needs a real file path on disk (profile_csv
+        # -> load_csv opens it with pandas), but Streamlit only gives us
+        # the uploaded bytes in memory. So we write those bytes out to a
+        # temp file first, point the agent at that path, and clean the
+        # temp file up afterwards -- the same handoff the FastAPI
+        # endpoint used to do with UploadFile, just without the HTTP hop.
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=".csv", delete=False
+        ) as tmp:
+            tmp.write(uploaded_file.getvalue())
+            tmp_path = tmp.name
+
         try:
-            response = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=120)
-            response.raise_for_status()
+            result = analyze_csv_file(tmp_path)
             # Stored in session_state so the result survives future
             # reruns (e.g. if the user interacts with something else on
             # the page) without needing to re-run the whole analysis.
-            st.session_state["result"] = response.json()
-        except requests.exceptions.ConnectionError:
-            st.error(
-                f"Couldn't reach the backend at {BACKEND_URL}. Is the "
-                f"FastAPI server running? (`uvicorn main:app --reload` "
-                f"in a separate terminal)"
-            )
-        except requests.exceptions.RequestException as e:
-            st.error(f"Something went wrong calling the backend: {e}")
+            st.session_state["result"] = result
+        finally:
+            os.remove(tmp_path)
 
 # Render whatever the most recent result was, on every rerun -- this is
 # what makes the result stick around even after the button click itself
@@ -71,7 +87,12 @@ if "result" in st.session_state:
 
         if result["charts"]:
             st.subheader("Charts")
-            for chart_url in result["charts"]:
-                st.image(f"{BACKEND_URL}{chart_url}")
+            for chart_path in result["charts"]:
+                # No backend, no URL -- analyze_csv_file() already
+                # returns local file paths (e.g. outputs/chart_1.png),
+                # and st.image() happily reads a chart straight off
+                # disk. This is actually simpler than the old
+                # BACKEND_URL + /charts/... URL version.
+                st.image(chart_path)
     else:
         st.error(f"Analysis failed: {result['error']}")
