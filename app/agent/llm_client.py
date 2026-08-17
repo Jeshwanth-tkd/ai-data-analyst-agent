@@ -21,18 +21,25 @@ from groq import Groq
 # sends your key anywhere by itself.
 load_dotenv()
 
-MODEL = "llama-3.3-70b-versatile"
+# llama-3.3-70b-versatile was deprecated by Groq on 2026-08-16 — this is
+# a live example of why depending on a third-party API means models can
+# be retired without warning. openai/gpt-oss-120b is Groq's current
+# recommended replacement (also noted for strong coding performance).
+MODEL = "openai/gpt-oss-120b"
 
 SYSTEM_PROMPT = """You are an expert data analyst who writes Python code to explore datasets.
 
 You will be given a JSON profile describing a pandas DataFrame that has already been loaded into a variable called `df`. The profile includes the DataFrame's shape, column names and data types, null counts, unique-value counts, and a few real sample rows.
 
-Your job: write a short Python script that performs useful exploratory analysis on `df` and prints the results. Assume `df` already exists in the environment your code will run in — do NOT write code to load a CSV yourself.
+Your job: write a short Python script that performs useful exploratory analysis on `df`, prints its findings, and optionally saves 1-3 charts as image files. Assume `df` already exists in the environment your code will run in — do NOT write code to load a CSV yourself.
 
 Rules you must follow exactly:
-- Only use pandas, which is already imported as `pd`. Do not import or use any other library.
+- Only use pandas (imported as `pd`) and matplotlib.pyplot (imported as `plt`). Do not import or use any other library.
 - Your code must not crash if a column contains missing (NaN) values.
-- Print your findings using print(...) statements with clear, human-readable labels.
+- Every insight you want reported MUST be printed as its own print() statement, and the text MUST start with the literal marker "INSIGHT: ", for example:
+  print("INSIGHT: Electronics has the highest average price at $34.20")
+  Do not print anything else that starts with "INSIGHT: " — only genuine findings.
+- If you create a chart, save it with plt.savefig("outputs/chart_1.png") for the first chart, "outputs/chart_2.png" for the second, and so on. Do not call plt.show().
 - Respond with ONLY a single fenced Python code block, like this:
 ```python
 # your code here

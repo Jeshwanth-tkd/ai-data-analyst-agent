@@ -40,6 +40,15 @@ def run_code(code: str, csv_path: str, timeout: int = TIMEOUT_SECONDS) -> dict:
     Returns a dict: {"success": bool, "stdout": str, "stderr": str}
     """
     wrapper_script = (
+        # Force matplotlib into non-interactive, file-only mode BEFORE
+        # anything imports pyplot. Without this, a plt.show() call (or
+        # even certain backends by default) can try to open a GUI
+        # window with no display attached and hang until our timeout
+        # kills it. We don't rely on the LLM remembering not to call
+        # plt.show() — we make it a no-op ourselves, regardless.
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
         "import pandas as pd\n"
         f"df = pd.read_csv(r{csv_path!r})\n\n"
         f"{code}\n"
