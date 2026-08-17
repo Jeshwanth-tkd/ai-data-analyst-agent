@@ -57,8 +57,11 @@ itself isn't built until Phase 4.
   a few intentional missing values) used to manually verify the profiler.
 
 ### Phase 3 — LLM connection ✅
-- `app/agent/llm_client.py` added: connects to Groq's free API
-  (`llama-3.3-70b-versatile`) using the official `groq` Python client.
+- `app/agent/llm_client.py` added: connects to Groq's free API using the
+  official `groq` Python client. *(Originally used `llama-3.3-70b-versatile`;
+  switched to `openai/gpt-oss-120b` after Groq deprecated that model on
+  2026-08-16 — a live example of a third-party API changing under a
+  running project.)*
 - Wrote a system prompt that constrains the LLM to a single role — given
   a dataset profile (from Phase 2), output *only* a fenced Python code
   block that analyzes a DataFrame already loaded as `df`. No chat, no
@@ -96,7 +99,27 @@ itself isn't built until Phase 4.
   infinite loop — confirming success capture, error capture, and the
   timeout kill-switch all work correctly.
 
-### Phase 5 — Insight & chart generation (next)
+### Phase 5 — Insight & chart generation ✅
+- System prompt extended: the LLM may now also use `matplotlib.pyplot`
+  (as `plt`), save 1-3 charts as `outputs/chart_1.png`, `chart_2.png`, etc.,
+  and must prefix every genuine finding with an `INSIGHT: ` marker so it
+  can be reliably separated from any other printed text.
+- `app/output/insights.py` added: `parse_insights()` filters stdout for
+  `INSIGHT: ` lines, `list_chart_files()` finds saved chart images,
+  `clear_outputs_dir()` wipes old charts before each run so only the
+  current run's images are ever present, and `analyze_and_structure()`
+  ties Phases 2-5 into one call returning a clean result dict.
+- `code_executor.py`'s subprocess wrapper now forces matplotlib into
+  non-interactive `Agg` (file-only) mode before any generated code runs —
+  a defensive measure so a stray `plt.show()` call can't hang the
+  subprocess waiting on a GUI window that will never appear.
+- Verified locally with hand-written fake "LLM output" before trusting
+  live model output, which caught a real bug: the wrapper script wasn't
+  actually importing `matplotlib.pyplot as plt` for the generated code to
+  use, despite the system prompt promising it was available — fixed
+  before it ever reached a real run.
+
+### Phase 6 — Malformed-input hardening (next)
 Not started yet.
 
 ## Tech stack
