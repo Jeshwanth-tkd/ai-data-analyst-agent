@@ -56,7 +56,26 @@ itself isn't built until Phase 4.
 - Added `data/samples/sample_sales.csv`, a small sample dataset (10 rows,
   a few intentional missing values) used to manually verify the profiler.
 
-### Phase 3 — LLM connection (next)
+### Phase 3 — LLM connection ✅
+- `app/agent/llm_client.py` added: connects to Groq's free API
+  (`llama-3.3-70b-versatile`) using the official `groq` Python client.
+- Wrote a system prompt that constrains the LLM to a single role — given
+  a dataset profile (from Phase 2), output *only* a fenced Python code
+  block that analyzes a DataFrame already loaded as `df`. No chat, no
+  explanation, no loading logic of its own.
+- `generate_analysis_code(profile)` sends the profile as JSON in the
+  user message and returns the extracted code as a plain string — it
+  does **not** execute that code (that's Phase 4, kept in a separate
+  `executor/` module on purpose).
+- Code extraction uses a regex to pull text out of a ```` ```python ... ``` ````
+  fence, with a naive fallback if the model doesn't follow instructions —
+  full defensive handling of bad model output comes in Phase 6.
+- API key is read from a local `.env` file via `python-dotenv`; `.env`
+  itself is git-ignored and was never shared outside the developer's
+  own machine.
+- Added `groq` and `python-dotenv` to `requirements.txt`.
+
+### Phase 4 — Code execution loop (next)
 Not started yet.
 
 ## Tech stack
