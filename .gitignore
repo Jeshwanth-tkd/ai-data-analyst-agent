@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/
+
+# Generated outputs (keep the folder, ignore its contents)
+outputs/*
+!outputs/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
