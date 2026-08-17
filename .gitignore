@@ -30,3 +30,7 @@ data/samples/messy_huge.csv
 
 # Phase 9 benchmark timer state (regenerated each run, not meaningful to keep)
 tests/.manual_eda_timer.json
+
+# Personal interview prep notes -- useful to keep locally, not meant for
+# a public repo a recruiter might browse
+interview-prep.md

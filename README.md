@@ -7,6 +7,8 @@ self-corrects if the generated code errors out on malformed data.
 Built as a portfolio project, phase by phase, with a focus on understanding
 every piece rather than scaffolding it all at once.
 
+**🔗 Live demo:** https://ai-data-analyst-agent-j2hnysterzf5yhjhathkqe.streamlit.app/
+
 ## Why this project
 
 Most "AI data analyst" demos just wrap an LLM around `df.describe()`. This one
@@ -236,14 +238,65 @@ itself isn't built until Phase 4.
   here would have meant borrowing a shaky number to describe something
   it wasn't measuring.
 
-### Phase 10 — Deployment (next)
-Not started yet.
+### Phase 10 — Deployment ✅
+- **Live demo:** https://ai-data-analyst-agent-j2hnysterzf5yhjhathkqe.streamlit.app/
+- **Original plan vs. what actually shipped:** the plan was two separate free
+  services — Streamlit for the UI, FastAPI (Phase 7) as a separately hosted
+  backend, talking over HTTP, exactly as built in Phases 7-8. Getting a
+  genuinely free, no-credit-card, persistent host for the *backend* turned
+  out to be the real obstacle, not the frontend:
+  - **Hugging Face Spaces** looked free based on their published pricing
+    page, but the actual Space-creation UI showed Docker/Gradio Spaces now
+    require a paid plan — a live contradiction of that earlier research,
+    caught by trying to actually create one.
+  - **Render** was ambiguous on whether a free web service requires a card
+    on file, based on their docs alone.
+  - **Vercel** is confirmed free for FastAPI, but Vercel Functions are
+    stateless/serverless — a genuine architecture mismatch, not just a cost
+    question: our design had one request save a chart file and a second
+    request fetch it via a static file mount, and those two requests could
+    land on different, disk-isolated containers with nothing shared between
+    them.
+- **The pivot:** rather than keep hunting for host #3, `streamlit_app.py`
+  was rewritten to call `app.output.insights.analyze_csv_file()` directly,
+  in-process, instead of making an HTTP request to a separately-hosted
+  FastAPI backend. One Streamlit process, one filesystem, one free host
+  (Streamlit Community Cloud) — the chart-sharing problem disappears
+  because there's no longer a second service to share anything with.
+  `BACKEND_URL`/`requests` are gone from the frontend; chart paths returned
+  by `analyze_csv_file()` are passed straight to `st.image()`.
+  The tradeoff: the frontend now imports directly from `app/`, so it's no
+  longer a thin, swappable HTTP client — a deliberate, explainable trade
+  for "actually deployed and free" over "perfectly decoupled services."
+- `main.py` (the FastAPI backend) and the `Dockerfile`/`.dockerignore`
+  built for it are kept in the repo even though they're no longer the
+  deployment path — they're real, working artifacts that show the backend
+  can run standalone (e.g. in Docker, or behind its own host later), just
+  not what's live right now.
+- **Real bug found on the live deployment:** a line chart with many daily
+  date labels on the x-axis rendered with the labels overlapping and
+  unreadable — not a pipeline bug (the chart itself was generated and
+  saved correctly), but a formatting gap in what the LLM's own code wrote.
+  Fixed at the source: the system prompt (`app/agent/llm_client.py`) now
+  explicitly instructs the model to rotate x-axis labels when there are
+  more than ~6 of them (`plt.xticks(rotation=45, ha="right")`) and to
+  always call `plt.tight_layout()` before saving — so the fix applies to
+  every future chart the agent generates, not just this one.
+- Deployed via Streamlit Community Cloud: connected the GitHub repo,
+  pointed it at `streamlit_app.py` on `main`, and added `GROQ_API_KEY` as a
+  Secret through their dashboard (TOML format) rather than committing it
+  anywhere — Streamlit injects it as an environment variable at runtime,
+  which is exactly what `os.environ.get("GROQ_API_KEY")` already expected.
+  The app auto-redeploys on every push to `main`.
 
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)
 - **Language**: Python
-- **Planned**: FastAPI (backend), Streamlit (frontend)
+- **Frontend + agent runtime**: Streamlit (single process — see Phase 10)
+- **Also included, not currently deployed**: FastAPI backend (`main.py`) and
+  a `Dockerfile`, kept as working standalone artifacts (Phase 7 / Phase 10)
+- **Hosting**: [Streamlit Community Cloud](https://streamlit.io/cloud) (free)
 
 ## Running locally
 
@@ -252,6 +305,10 @@ python -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env          # then fill in your real GROQ_API_KEY
+streamlit run streamlit_app.py
 ```
 
-(More detailed run instructions will be added as each phase adds runnable code.)
+That's it — one command, one terminal. (The FastAPI backend in `main.py` can
+still be run standalone with `uvicorn main:app --reload` if you want to hit
+`/analyze` directly or explore the interactive docs at `/docs`, but the
+Streamlit app no longer depends on it.)
