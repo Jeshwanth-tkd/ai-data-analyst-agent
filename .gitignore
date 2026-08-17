@@ -21,5 +21,9 @@ env/
 outputs/*
 !outputs/.gitkeep
 
+# Generated test data (created locally by generate_huge_sample.py —
+# regeneratable, not worth committing)
+data/samples/messy_huge.csv
+
 # Jupyter
 .ipynb_checkpoints/

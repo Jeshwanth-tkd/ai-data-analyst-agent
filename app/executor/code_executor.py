@@ -58,16 +58,34 @@ def run_code(code: str, csv_path: str, timeout: int = TIMEOUT_SECONDS) -> dict:
     # re-opened by another process (our subprocess) while we're still
     # holding it open — so we close it first, then clean it up ourselves
     # in the `finally` block below.
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp:
+    #
+    # encoding="utf-8" is explicit on purpose: Windows' default text
+    # encoding is an older, more limited encoding (often called
+    # "charmap"), which errors on many valid Unicode characters the LLM
+    # can legitimately produce (typographic dashes, curly quotes, etc.).
+    # Linux/Mac default to UTF-8 already, which is why this bug wouldn't
+    # show up in testing done there — always pin the encoding explicitly
+    # rather than relying on a platform's default.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
         tmp.write(wrapper_script)
         tmp_path = tmp.name
+
+    # Also force the CHILD process's own stdout/stderr into UTF-8 mode.
+    # Without this, the subprocess itself could crash trying to print()
+    # a special character using Windows' default console encoding —
+    # a separate instance of the same root problem as the temp file fix
+    # above, just happening inside the child instead of in our code.
+    child_env = os.environ.copy()
+    child_env["PYTHONIOENCODING"] = "utf-8"
 
     try:
         result = subprocess.run(
             [sys.executable, tmp_path],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout,
+            env=child_env,
         )
         return {
             "success": result.returncode == 0,

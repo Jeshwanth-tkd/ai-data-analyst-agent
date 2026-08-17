@@ -11,6 +11,15 @@ than making the LLM guess at the data's structure.
 import os
 import pandas as pd
 
+# A deliberately conservative cap for a free-tier hobby/portfolio project —
+# not a claim about what's "too big" in general, just a predictable limit
+# that keeps load time and LLM prompt size fast and free-tier-friendly.
+# Checked as a file-size (bytes on disk) rather than a row count, because
+# that lets us reject an oversized file BEFORE spending time reading the
+# whole thing into memory.
+MAX_FILE_SIZE_MB = 5
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
 
 def load_csv(file_path: str) -> pd.DataFrame:
     """
@@ -19,15 +28,30 @@ def load_csv(file_path: str) -> pd.DataFrame:
     We don't just call pd.read_csv() directly and hope for the best —
     we catch the specific ways this can fail and raise a clear,
     human-readable error instead of letting pandas' raw traceback
-    surface. Deeper handling of truly messy/malformed CSVs (bad
-    encodings, missing headers, huge files) is Phase 6's job — for
-    now we're covering the common, expected failure cases.
+    surface.
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"No file found at: {file_path}")
 
+    file_size = os.path.getsize(file_path)
+    if file_size > MAX_FILE_SIZE_BYTES:
+        size_mb = file_size / (1024 * 1024)
+        raise ValueError(
+            f"File is {size_mb:.1f} MB, which is over the {MAX_FILE_SIZE_MB} MB "
+            f"limit this project currently supports. Try a smaller file, or a "
+            f"sample of the full dataset."
+        )
+
     try:
-        df = pd.read_csv(file_path)
+        # Try standard UTF-8 first (the overwhelming majority of real CSVs).
+        # Fall back to latin-1 for files exported from tools (e.g. older
+        # Excel versions) that use a different encoding — latin-1 can
+        # decode any byte sequence without erroring, so it's a safe
+        # last-resort rather than crashing on an encoding mismatch.
+        try:
+            df = pd.read_csv(file_path, encoding="utf-8")
+        except UnicodeDecodeError:
+            df = pd.read_csv(file_path, encoding="latin-1")
     except pd.errors.EmptyDataError:
         raise ValueError(f"The file at {file_path} is empty — no data to read.")
     except pd.errors.ParserError as e:

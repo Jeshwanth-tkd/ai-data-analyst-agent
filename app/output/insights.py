@@ -1,5 +1,10 @@
 """
 Phase 5: Insight & chart generation.
+Phase 6 addition: analyze_csv_file(), a single hardened entry point that
+wraps the *entire* pipeline (ingestion through output) so a bad file or
+an unexpected failure anywhere never crashes with a raw traceback — it
+always comes back as a clean result dict. This is also the exact
+function Phase 7's API endpoint will call.
 
 This module doesn't talk to the LLM or run any code itself — it takes
 the raw result of Phase 4's execution loop and structures it into
@@ -11,6 +16,7 @@ import glob
 import os
 
 from app.executor.code_executor import run_with_self_correction
+from app.ingestion.csv_profiler import profile_csv
 
 OUTPUTS_DIR = "outputs"
 INSIGHT_MARKER = "INSIGHT: "
@@ -75,15 +81,56 @@ def analyze_and_structure(profile: dict, csv_path: str) -> dict:
     }
 
 
-# Demo block: runs the full Phase 2 -> 3 -> 4 -> 5 pipeline end to end.
+def analyze_csv_file(csv_path: str) -> dict:
+    """
+    Phase 6's hardened entry point. Runs the whole pipeline — profile,
+    generate code, execute, self-correct, structure results — and
+    GUARANTEES a clean result dict comes back no matter what goes wrong,
+    at any stage. Nothing here should ever raise an exception outward.
+
+    There are two layers of error handling on purpose:
+    1. Specific, expected failures (bad file, empty file, oversized
+       file) are already caught with clear messages inside load_csv().
+    2. This function's `except Exception` is a broad, final backstop —
+       it catches anything unexpected we didn't specifically plan for
+       (a Groq API/network error, a rate limit, a bug we haven't found
+       yet) so the caller (soon: a FastAPI endpoint) never has to deal
+       with a raw crash, only ever this one consistent dict shape.
+    """
+    try:
+        profile = profile_csv(csv_path)
+    except Exception as e:
+        return {
+            "success": False,
+            "insights": [],
+            "charts": [],
+            "error": f"Could not read the CSV file: {e}",
+            "attempts": [],
+        }
+
+    try:
+        return analyze_and_structure(profile, csv_path)
+    except Exception as e:
+        return {
+            "success": False,
+            "insights": [],
+            "charts": [],
+            "error": f"Unexpected error while analyzing the file: {e}",
+            "attempts": [],
+        }
+
+
+# Demo block: runs the full Phase 2 -> 3 -> 4 -> 5 -> 6 pipeline end to end.
+# Accepts an optional CSV path as a command-line argument, so we can
+# easily stress-test different messy files without editing this file:
+#   python -m app.output.insights data/samples/messy_no_header.csv
 if __name__ == "__main__":
-    from app.ingestion.csv_profiler import profile_csv
+    import sys
 
-    sample_path = os.path.join("data", "samples", "sample_sales.csv")
-    profile = profile_csv(sample_path)
+    csv_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join("data", "samples", "sample_sales.csv")
 
-    print("Running the full agent pipeline on sample_sales.csv...\n")
-    result = analyze_and_structure(profile, sample_path)
+    print(f"Running the full agent pipeline on {csv_path}...\n")
+    result = analyze_csv_file(csv_path)
 
     if result["success"]:
         print(f"Insights found: {len(result['insights'])}")
@@ -101,5 +148,5 @@ if __name__ == "__main__":
         print(result["attempts"][-1]["code"])
         print("--------------------------------------------")
     else:
-        print("Agent failed after all retries.")
-        print("Last error:", result["error"])
+        print("Analysis failed.")
+        print("Reason:", result["error"])
