@@ -184,7 +184,30 @@ itself isn't built until Phase 4.
   a FastAPI app), `python-multipart` (required specifically for file
   upload support).
 
-### Phase 8 — Frontend (next)
+### Phase 8 — Frontend ✅
+- `streamlit_app.py` added: a Streamlit UI with a file uploader and an
+  "Analyze" button that calls the Phase 7 FastAPI backend over real
+  HTTP (`requests.post`) — a true frontend/backend split, not a
+  same-process shortcut.
+- The "Analyze" click is a deliberate trigger, with the result cached
+  in `st.session_state` — necessary because Streamlit reruns the whole
+  script on every interaction, so without a trigger + cache, an
+  unrelated click could silently re-run the (slow, LLM-calling)
+  analysis.
+- `BACKEND_URL` reads from an environment variable with a localhost
+  default, so the deployed frontend (Phase 10) can point at a deployed
+  backend without a code change.
+- A spinner shows during the (10-30 second) analysis call, satisfying
+  the "show progress as agent thinks" requirement from the original
+  plan — full live step-by-step progress (e.g. streaming which retry
+  attempt is running) would need WebSockets/SSE on the backend, which
+  is a reasonable future improvement but out of scope for now.
+- Verified locally by running both servers together and confirming
+  both boot and respond over HTTP before manual browser testing.
+- Confirmed working end-to-end: real CSV upload → live LLM analysis →
+  insights and both chart images rendering correctly on the page.
+
+### Phase 9 — Testing (next)
 Not started yet.
 
 ## Tech stack
