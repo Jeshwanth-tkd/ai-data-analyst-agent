@@ -8,6 +8,20 @@ Built as a portfolio project, phase by phase, with a focus on understanding
 every piece rather than scaffolding it all at once.
 
 **🔗 Live demo:** https://ai-data-analyst-agent-j2hnysterzf5yhjhathkqe.streamlit.app/
+*(Free-tier hosting — if the app shows a "wake up" screen, it just went to sleep from inactivity; one click and it's back in ~15 seconds.)*
+
+## Screenshots
+
+![Upload screen with insights](screenshots/upload.png)
+![Insights and generated charts](screenshots/results.png)
+
+## Results
+
+In a timed personal test, this agent completed first-pass exploratory data
+analysis on a 200-row dataset in **6.5 seconds**, versus **3.7 minutes**
+doing the same fixed checklist of analysis by hand — a **97% reduction** in
+my own analysis time on that dataset (single trial, full methodology and
+honest caveats in `tests/benchmark_results.md` and the Phase 9 log below).
 
 ## Why this project
 
@@ -312,3 +326,41 @@ That's it — one command, one terminal. (The FastAPI backend in `main.py` can
 still be run standalone with `uvicorn main:app --reload` if you want to hit
 `/analyze` directly or explore the interactive docs at `/docs`, but the
 Streamlit app no longer depends on it.)
+
+## What I'd improve with more time
+
+Being upfront about the rough edges, rather than hiding them, was a
+deliberate goal of this project — an honest limitations list is more
+credible than a project that claims to have none.
+
+- **Sandboxing is subprocess-based, not container-based.** A subprocess
+  gives real crash/hang isolation (Phase 4), but it's not a true security
+  boundary — the generated code still runs with the same OS-level
+  permissions as the rest of the app. A production version of this would
+  run generated code in a locked-down Docker container (or a purpose-built
+  sandbox like gVisor/Firecracker) with no filesystem or network access
+  beyond what's explicitly needed.
+- **The self-correction retry limit (3) and execution timeout (15s) are
+  fixed constants, not tuned against real usage data.** With more real
+  traffic I'd want to actually measure how often a 2nd vs. 3rd retry
+  succeeds, and whether 15s is too tight for larger datasets, rather than
+  keeping numbers I picked for reasonable-sounding defaults.
+- **Chart-serving assumes a shared local filesystem** (Phase 10). That's
+  fine for the current single-process Streamlit deployment, but it's the
+  exact assumption that made a stateless/serverless backend host
+  (Vercel) incompatible. A version meant to scale as two independent
+  services would upload generated charts to object storage and pass back
+  a URL instead.
+- **The "97% time saved" number is one trial, one dataset, one person**
+  (Phase 9) — real, honestly measured, but not something I'd present as a
+  statistically validated average without running it across more datasets,
+  more trials, and ideally someone other than me doing the manual side.
+- **No streaming progress.** The UI shows one opaque "agent is thinking"
+  spinner rather than live status per step (profiling → generating code →
+  running → retrying). That would need the backend to stream updates
+  (WebSockets/SSE), which is a real architecture change, not a small tweak.
+- **Known, documented, not fixed:** the agent's column-type detection can
+  misidentify a small-integer ID column as a Unix timestamp on certain
+  malformed inputs (see Phase 6) — harmless here, but a good example of
+  where I chose to document a limitation rather than spend disproportionate
+  effort engineering around a rare, low-stakes edge case.
