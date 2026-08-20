@@ -31,6 +31,11 @@ failed validation is fed back into the same retry path as a scanner
 block or a real crash, and outputs/ is cleared before every individual
 attempt (not just once per whole analysis) so validation is always
 checking files this specific attempt actually produced.
+
+Phase 23 addition: run_code()'s subprocess wrapper script no longer
+hardcodes pd.read_csv() -- _build_load_statement() dispatches by file
+extension so an Excel/JSON/Parquet upload's data gets loaded correctly
+before the LLM's generated code runs on it.
 """
 
 import glob
@@ -46,6 +51,29 @@ from app.validation.result_validator import format_issues, validate_result
 MAX_RETRIES = 3
 TIMEOUT_SECONDS = 15
 OUTPUTS_DIR = "outputs"
+
+
+def _build_load_statement(data_path: str) -> str:
+    """
+    Phase 23: the subprocess wrapper used to hardcode `pd.read_csv(...)`
+    unconditionally -- fine while every upload was a CSV, but for an
+    Excel/JSON/Parquet upload the generated code would always crash on
+    this FIRST line, before any LLM-generated code even runs. That
+    failure is outside the LLM's own code, so feeding it back for a
+    "fix" is pointless -- every retry hits the identical error. This
+    dispatches by extension instead, mirroring csv_profiler.load_data_file()
+    (kept as a separate, inline implementation rather than importing that
+    module into the subprocess, so the sandboxed subprocess stays a
+    plain script with no dependency on our app package or its sys.path).
+    """
+    extension = os.path.splitext(data_path)[1].lower()
+    if extension in (".xlsx", ".xls"):
+        return f"df = pd.read_excel(r{data_path!r}, sheet_name=0)\n"
+    if extension == ".json":
+        return f"df = pd.read_json(r{data_path!r})\n"
+    if extension == ".parquet":
+        return f"df = pd.read_parquet(r{data_path!r})\n"
+    return f"df = pd.read_csv(r{data_path!r})\n"
 
 
 def _clear_chart_files(outputs_dir: str = OUTPUTS_DIR) -> None:
@@ -82,7 +110,7 @@ def run_code(code: str, csv_path: str, timeout: int = TIMEOUT_SECONDS) -> dict:
         "matplotlib.use('Agg')\n"
         "import matplotlib.pyplot as plt\n"
         "import pandas as pd\n"
-        f"df = pd.read_csv(r{csv_path!r})\n\n"
+        f"{_build_load_statement(csv_path)}\n"
         f"{code}\n"
     )
 

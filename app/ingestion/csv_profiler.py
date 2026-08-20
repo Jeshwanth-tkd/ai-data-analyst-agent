@@ -6,6 +6,21 @@ dictionary that describes its shape, columns, data types, missing values,
 and a few sample rows. This profile is what we'll hand to the LLM in
 Phase 3 instead of the raw file — cheaper, faster, and more reliable
 than making the LLM guess at the data's structure.
+
+Phase 23 addition: load_data_file() extends ingestion beyond CSV to
+Excel (.xlsx/.xls), JSON (.json), and Parquet (.parquet), dispatching by
+file extension and applying the same size-cap + empty-check safety
+guarantees as load_csv() (factored out into _enforce_size_cap() /
+_reject_if_empty() so every format gets the identical guarantees, not a
+reimplementation per format). load_csv() itself is UNCHANGED -- kept as
+its own function (not folded into the dispatcher) since the rest of the
+codebase (and its own test suite) already calls it directly by name;
+renaming everywhere "csv" appears (profile_csv, csv_path parameters
+throughout app/executor, app/agent, etc.) would be a much larger,
+riskier rename touching nearly every module, out of proportion to this
+phase's actual goal. That naming inconsistency (a "csv_path" parameter
+that may now hold an Excel/JSON/Parquet path) is a known, documented
+tradeoff -- see the README's Phase 23 entry.
 """
 
 import os
@@ -20,16 +35,10 @@ import pandas as pd
 MAX_FILE_SIZE_MB = 5
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".parquet"}
 
-def load_csv(file_path: str) -> pd.DataFrame:
-    """
-    Safely load a CSV file into a pandas DataFrame.
 
-    We don't just call pd.read_csv() directly and hope for the best —
-    we catch the specific ways this can fail and raise a clear,
-    human-readable error instead of letting pandas' raw traceback
-    surface.
-    """
+def _enforce_size_cap(file_path: str) -> None:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"No file found at: {file_path}")
 
@@ -41,6 +50,23 @@ def load_csv(file_path: str) -> pd.DataFrame:
             f"limit this project currently supports. Try a smaller file, or a "
             f"sample of the full dataset."
         )
+
+
+def _reject_if_empty(df: pd.DataFrame, file_path: str) -> None:
+    if df.empty:
+        raise ValueError(f"The file at {file_path} loaded, but contains no rows.")
+
+
+def load_csv(file_path: str) -> pd.DataFrame:
+    """
+    Safely load a CSV file into a pandas DataFrame.
+
+    We don't just call pd.read_csv() directly and hope for the best —
+    we catch the specific ways this can fail and raise a clear,
+    human-readable error instead of letting pandas' raw traceback
+    surface.
+    """
+    _enforce_size_cap(file_path)
 
     try:
         # Try standard UTF-8 first (the overwhelming majority of real CSVs).
@@ -57,10 +83,67 @@ def load_csv(file_path: str) -> pd.DataFrame:
     except pd.errors.ParserError as e:
         raise ValueError(f"Could not parse {file_path} as a CSV: {e}")
 
-    if df.empty:
-        raise ValueError(f"The file at {file_path} loaded, but contains no rows.")
-
+    _reject_if_empty(df, file_path)
     return df
+
+
+def _load_excel(file_path: str) -> pd.DataFrame:
+    _enforce_size_cap(file_path)
+    try:
+        # sheet_name=0 -- the first sheet, deliberately: multi-sheet
+        # support would need a sheet picker in the UI, out of scope here.
+        # This is a documented limitation, not a silent one.
+        df = pd.read_excel(file_path, sheet_name=0)
+    except ValueError as e:
+        raise ValueError(f"Could not read {file_path} as an Excel file: {e}")
+    _reject_if_empty(df, file_path)
+    return df
+
+
+def _load_json(file_path: str) -> pd.DataFrame:
+    _enforce_size_cap(file_path)
+    try:
+        # orient=None lets pandas auto-detect the common shapes (a list
+        # of records, or a dict of columns) rather than forcing the
+        # caller to know which one their file uses ahead of time.
+        df = pd.read_json(file_path)
+    except ValueError as e:
+        raise ValueError(f"Could not read {file_path} as JSON tabular data: {e}")
+    _reject_if_empty(df, file_path)
+    return df
+
+
+def _load_parquet(file_path: str) -> pd.DataFrame:
+    _enforce_size_cap(file_path)
+    try:
+        df = pd.read_parquet(file_path)
+    except Exception as e:
+        raise ValueError(f"Could not read {file_path} as a Parquet file: {e}")
+    _reject_if_empty(df, file_path)
+    return df
+
+
+def load_data_file(file_path: str) -> pd.DataFrame:
+    """
+    Load a data file of any supported format (CSV, Excel, JSON, Parquet)
+    into a DataFrame, dispatching on the file extension. Every format
+    gets the same size-cap and empty-check guarantees as load_csv().
+    """
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported file type '{extension}'. Supported types: "
+            f"{', '.join(sorted(SUPPORTED_EXTENSIONS))}."
+        )
+
+    if extension == ".csv":
+        return load_csv(file_path)
+    if extension in (".xlsx", ".xls"):
+        return _load_excel(file_path)
+    if extension == ".json":
+        return _load_json(file_path)
+    if extension == ".parquet":
+        return _load_parquet(file_path)
 
 
 def profile_dataframe(df: pd.DataFrame, sample_size: int = 5) -> dict:

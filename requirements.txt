@@ -10,3 +10,6 @@ requests
 pydantic
 scikit-learn
 scipy
+openpyxl
+pyarrow
+statsmodels
