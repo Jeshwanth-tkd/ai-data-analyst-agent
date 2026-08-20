@@ -21,8 +21,19 @@ instead, the violation list is fed back into the exact same
 self-correction path used for real runtime errors (confirmed with the
 developer: unsafe code costs a retry attempt, exactly like a crash would,
 rather than immediately failing the whole analysis).
+
+Phase 14 addition: a subprocess exit code of 0 only means "didn't crash"
+— it says nothing about whether the code actually produced anything
+useful. app/validation/result_validator.py's validate_result() runs
+right after a successful execution and checks for at least one real
+INSIGHT line and any chart files being genuine, non-corrupt PNGs. A
+failed validation is fed back into the same retry path as a scanner
+block or a real crash, and outputs/ is cleared before every individual
+attempt (not just once per whole analysis) so validation is always
+checking files this specific attempt actually produced.
 """
 
+import glob
 import os
 import subprocess
 import sys
@@ -30,9 +41,21 @@ import tempfile
 
 from app.agent.llm_client import generate_analysis_code
 from app.security.code_scanner import format_violations, scan_code
+from app.validation.result_validator import format_issues, validate_result
 
 MAX_RETRIES = 3
 TIMEOUT_SECONDS = 15
+OUTPUTS_DIR = "outputs"
+
+
+def _clear_chart_files(outputs_dir: str = OUTPUTS_DIR) -> None:
+    """
+    Delete any chart_*.png left over from a previous attempt, so a stale
+    file from an earlier (possibly failed) attempt in this same retry
+    loop can't get credited to a later attempt during validation.
+    """
+    for path in glob.glob(os.path.join(outputs_dir, "chart_*.png")):
+        os.remove(path)
 
 
 def run_code(code: str, csv_path: str, timeout: int = TIMEOUT_SECONDS) -> dict:
@@ -139,6 +162,8 @@ def run_with_self_correction(
         scan_result = scan_code(code)
         blocked_by_scanner = not scan_result["safe"]
 
+        failed_validation = False
+
         if blocked_by_scanner:
             result = {
                 "success": False,
@@ -146,7 +171,20 @@ def run_with_self_correction(
                 "stderr": format_violations(scan_result["violations"]),
             }
         else:
+            _clear_chart_files()
             result = run_code(code, csv_path)
+
+            # Phase 14: a clean exit code isn't proof the result is
+            # actually usable -- check that before trusting "success".
+            if result["success"]:
+                validation_result = validate_result(result["stdout"])
+                if not validation_result["valid"]:
+                    failed_validation = True
+                    result = {
+                        "success": False,
+                        "stdout": result["stdout"],
+                        "stderr": format_issues(validation_result["issues"]),
+                    }
 
         attempts.append({
             "attempt": attempt_number,
@@ -155,6 +193,7 @@ def run_with_self_correction(
             "stdout": result["stdout"],
             "stderr": result["stderr"],
             "blocked_by_scanner": blocked_by_scanner,
+            "failed_validation": failed_validation,
         })
 
         if result["success"]:

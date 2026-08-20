@@ -392,6 +392,27 @@ itself isn't built until Phase 4.
   `analyze_csv_file()` regression run and a headless `streamlit run` boot
   check to confirm Phase 12 and Phase 13 work correctly together.
 
+### Phase 14 — Validation Layer ✅
+- **What it closes:** the last gap `ARCHITECTURE_BEFORE.md` flagged — "no
+  validation layer between 'code ran successfully' and 'the result is
+  reported as success.'" A subprocess exit code of 0 only means the code
+  didn't crash; it says nothing about whether it produced anything useful.
+- **`app/validation/result_validator.py`** checks a successful run for:
+  at least one real `INSIGHT: ` line in stdout, and any `chart_*.png`
+  files being genuine, non-corrupt PNGs (checked via real PNG magic
+  bytes, not just trusting the file extension).
+- **Wired the same way as Phase 13:** a failed validation is fed back into
+  the existing self-correction retry loop as if it were a runtime error,
+  costing one of the same attempts, rather than a separate code path.
+- **Side fix:** `outputs/` is now cleared before every individual retry
+  attempt, not just once per whole analysis — otherwise a stale chart
+  from an earlier failed attempt could get validated as if the *current*
+  attempt had produced it.
+- **Verified before shipping:** unit tests on the validator, an
+  integration test where a no-insight-printed response gets caught and
+  retried into a valid one, and a full `analyze_csv_file()` + headless
+  `streamlit run` regression check with Phases 12-14 all active together.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)
