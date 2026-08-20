@@ -141,17 +141,24 @@ def run_with_self_correction(
     profile: dict,
     csv_path: str,
     max_retries: int = MAX_RETRIES,
+    quality_report: dict = None,
+    eda_summary: dict = None,
 ) -> dict:
     """
     The full agentic loop: ask the LLM for code, run it, and if it
     fails, feed the error back to the LLM and ask it to fix its own
     code — up to `max_retries` additional attempts after the first.
 
+    Phase 16: `quality_report` and `eda_summary` (both optional) are
+    passed straight through to every generate_analysis_code() call below
+    — the first attempt and every retry — so the LLM has that context
+    for the whole loop, not just the initial attempt.
+
     Returns a dict describing the final outcome plus a full history of
     every attempt made, so we can show/debug the whole process later.
     """
     attempts = []
-    code = generate_analysis_code(profile)
+    code = generate_analysis_code(profile, quality_report=quality_report, eda_summary=eda_summary)
 
     for attempt_number in range(1, max_retries + 2):  # 1 initial + N fixes
         # Phase 13: check BEFORE running, not instead of running. A
@@ -213,6 +220,8 @@ def run_with_self_correction(
             profile,
             previous_code=code,
             error_message=result["stderr"],
+            quality_report=quality_report,
+            eda_summary=eda_summary,
         )
 
     return {

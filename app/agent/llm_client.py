@@ -6,6 +6,14 @@ LLM API, and gets back Python analysis code as a string. It does NOT run
 that code — that's Phase 4's job. Keeping "ask the LLM for code" and
 "run the code" in separate modules is the safety boundary described in
 the README.
+
+Phase 16 addition: generate_analysis_code() can now also be given a
+Phase 12 data-quality report and a Phase 16 baseline EDA report. Both
+are optional (default None) so every existing call site keeps working
+unchanged -- when present, they're folded into the prompt so the LLM
+can skip known-junk columns (constant/ID-like), stay aware of type
+mismatches and outliers already found, and build on top of baseline
+stats/correlations instead of re-deriving them from scratch.
 """
 
 import os
@@ -47,6 +55,11 @@ Rules you must follow exactly:
 # your code here
 ```
 Do not include any explanation, greeting, or commentary outside that code block.
+
+You may also be given a data quality report and a baseline EDA summary alongside the profile. When present:
+- Do NOT waste an insight restating a number that's already in the baseline summary verbatim -- build on it (e.g. explain why a correlation matters, compare a category's mean against the overall mean) instead of repeating it.
+- Avoid grouping or charting by any column listed as constant or ID-like in the quality report's structural_flags -- those columns carry no useful signal.
+- If a column is flagged with likely type issues or a high outlier fraction, account for that (e.g. don't just average a column that's mostly text-as-numbers without acknowledging it, or consider whether outliers are skewing a mean you report).
 """
 
 
@@ -63,14 +76,43 @@ def _extract_code(raw_response: str) -> str:
     return raw_response.strip()
 
 
-def _build_initial_message(profile: dict) -> str:
+def _build_context_blocks(quality_report: dict = None, eda_summary: dict = None) -> str:
+    """
+    Shared helper: render the optional Phase 12 / Phase 16 reports as
+    extra JSON blocks. Returns "" (nothing appended) when both are
+    None, so a caller that doesn't pass them gets the exact same
+    message shape as before Phase 16 -- fully backward compatible.
+    """
+    blocks = ""
+    if quality_report is not None:
+        blocks += (
+            "\n\nData quality report for this dataset:\n"
+            f"{json.dumps(quality_report, indent=2, default=str)}"
+        )
+    if eda_summary is not None:
+        blocks += (
+            "\n\nBaseline EDA summary already computed for this dataset "
+            "(build on this, don't just repeat it):\n"
+            f"{json.dumps(eda_summary, indent=2, default=str)}"
+        )
+    return blocks
+
+
+def _build_initial_message(profile: dict, quality_report: dict = None, eda_summary: dict = None) -> str:
     return (
         "Here is the profile of the dataset (already loaded as `df`):\n\n"
         f"{json.dumps(profile, indent=2, default=str)}"
+        f"{_build_context_blocks(quality_report, eda_summary)}"
     )
 
 
-def _build_fix_message(profile: dict, previous_code: str, error_message: str) -> str:
+def _build_fix_message(
+    profile: dict,
+    previous_code: str,
+    error_message: str,
+    quality_report: dict = None,
+    eda_summary: dict = None,
+) -> str:
     return (
         "The Python code below was written to analyze the dataset profile shown "
         "further down, but it failed when it was actually run. Fix the code so it "
@@ -78,7 +120,8 @@ def _build_fix_message(profile: dict, previous_code: str, error_message: str) ->
         f"Code that failed:\n```python\n{previous_code}\n```\n\n"
         f"Error message it produced:\n{error_message}\n\n"
         f"Dataset profile (already loaded as `df`):\n"
-        f"{json.dumps(profile, indent=2, default=str)}\n\n"
+        f"{json.dumps(profile, indent=2, default=str)}"
+        f"{_build_context_blocks(quality_report, eda_summary)}\n\n"
         "Respond with ONLY the corrected, fenced Python code block."
     )
 
@@ -87,6 +130,8 @@ def generate_analysis_code(
     profile: dict,
     previous_code: str = None,
     error_message: str = None,
+    quality_report: dict = None,
+    eda_summary: dict = None,
 ) -> str:
     """
     Send a dataset profile to the LLM and return the Python analysis
@@ -98,13 +143,21 @@ def generate_analysis_code(
     that already failed — this is the same function doing double duty
     for both "write code" and "fix code", since the API call itself is
     identical; only the message we send differs.
+
+    `quality_report` (Phase 12) and `eda_summary` (Phase 16) are both
+    optional and, when given, are included on EVERY call — initial
+    attempt and every fix attempt alike — so the model stays aware of
+    known data issues and baseline stats throughout the whole retry loop,
+    not just on the first try.
     """
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
     if previous_code and error_message:
-        user_message = _build_fix_message(profile, previous_code, error_message)
+        user_message = _build_fix_message(
+            profile, previous_code, error_message, quality_report, eda_summary
+        )
     else:
-        user_message = _build_initial_message(profile)
+        user_message = _build_initial_message(profile, quality_report, eda_summary)
 
     response = client.chat.completions.create(
         model=MODEL,

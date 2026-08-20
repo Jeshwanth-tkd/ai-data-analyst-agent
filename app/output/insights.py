@@ -13,6 +13,14 @@ insights, charts, error, attempts) is unchanged, so main.py's FastAPI
 endpoint and streamlit_app.py both keep working exactly as before even
 though neither has been told about the new key yet.
 
+Phase 16 addition: a second deterministic report (Phase 16's
+compute_auto_eda()) is computed from the same DataFrame, and BOTH
+reports are now passed down into the agent loop (previously
+quality_report was computed but never actually given to the LLM — only
+shown to the user afterward). Columns already flagged constant/ID-like
+by the quality report are excluded from the EDA summary's category
+breakdown, since they're already known to be meaningless.
+
 This module doesn't talk to the LLM or run any code itself — it takes
 the raw result of Phase 4's execution loop and structures it into
 something a future API/frontend can actually use: a clean list of
@@ -22,6 +30,7 @@ insight strings, and a list of chart image files that were produced.
 import glob
 import os
 
+from app.eda.auto_eda import compute_auto_eda
 from app.executor.code_executor import run_with_self_correction
 from app.ingestion.csv_profiler import load_csv, profile_dataframe
 from app.quality.data_quality import assess_data_quality
@@ -61,15 +70,24 @@ def list_chart_files(outputs_dir: str = OUTPUTS_DIR) -> list:
     return sorted(paths)
 
 
-def analyze_and_structure(profile: dict, csv_path: str) -> dict:
+def analyze_and_structure(
+    profile: dict,
+    csv_path: str,
+    quality_report: dict = None,
+    eda_summary: dict = None,
+) -> dict:
     """
     The full Phase 2-5 pipeline in one call: run the self-correcting
     agent loop (Phase 4), then structure whatever it produced into
-    clean insights + chart paths.
+    clean insights + chart paths. Phase 16: quality_report/eda_summary
+    are optional and, when given, are threaded straight through to the
+    agent loop so the LLM actually sees them.
     """
     clear_outputs_dir()
 
-    execution_result = run_with_self_correction(profile, csv_path)
+    execution_result = run_with_self_correction(
+        profile, csv_path, quality_report=quality_report, eda_summary=eda_summary
+    )
 
     if not execution_result["success"]:
         return {
@@ -118,6 +136,13 @@ def analyze_csv_file(csv_path: str) -> dict:
         df = load_csv(csv_path)
         profile = profile_dataframe(df)
         quality_report = assess_data_quality(df)
+        # Phase 16: don't waste EDA-summary space on columns already
+        # known to be meaningless (constant / ID-like), per Phase 12's
+        # own structural_flags for this exact dataset.
+        junk_columns = set(quality_report["structural_flags"]["constant_columns"]) | set(
+            quality_report["structural_flags"]["id_like_columns"]
+        )
+        eda_summary = compute_auto_eda(df, exclude_columns=junk_columns)
     except Exception as e:
         return {
             "success": False,
@@ -129,7 +154,9 @@ def analyze_csv_file(csv_path: str) -> dict:
         }
 
     try:
-        result = analyze_and_structure(profile, csv_path)
+        result = analyze_and_structure(
+            profile, csv_path, quality_report=quality_report, eda_summary=eda_summary
+        )
     except Exception as e:
         result = {
             "success": False,

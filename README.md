@@ -438,6 +438,43 @@ itself isn't built until Phase 4.
   pass — before ever pushing the workflow file, so the very first CI run
   on GitHub is expected to go green immediately.
 
+### Phase 16 — Richer Automatic EDA ✅
+- **The gap this closes:** Phase 12 (data quality) and this phase's own
+  baseline stats were both being *computed* but never actually *shown to
+  the LLM* — `quality_report` existed only for the user-facing UI. The
+  model was re-deriving means, top categories, and correlations from
+  scratch on every single call, and had no idea which columns were
+  already known to be junk (constant/ID-like) or which already had a
+  flagged type/outlier problem.
+- **`app/eda/auto_eda.py`** (new, same "deterministic pandas, no LLM"
+  pattern as Phase 12): baseline numeric stats (mean/median/std/min/max)
+  per numeric column, top-5 value counts for manageable categorical
+  columns, and the strongest numeric-to-numeric correlations (above a
+  0.3 threshold, deduplicated, top 5).
+- **Both reports now actually reach the LLM:** `quality_report` and the
+  new `eda_summary` are threaded through `analyze_csv_file()` →
+  `analyze_and_structure()` → `run_with_self_correction()` →
+  `generate_analysis_code()`, and included on every call — the first
+  attempt *and* every self-correction retry, so the context doesn't
+  disappear after attempt 1. Both parameters default to `None` so every
+  pre-Phase-16 call site keeps working unchanged.
+- **The EDA summary excludes junk columns automatically** — it's built
+  with the union of Phase 12's `constant_columns` and `id_like_columns`
+  passed in as columns to skip, so the model isn't shown a "top
+  categories" breakdown for something like an order ID.
+- **System prompt updated** to tell the model what to do with this new
+  context: don't restate a baseline stat verbatim, don't group/chart by
+  constant/ID-like columns, and account for flagged type/outlier issues
+  rather than silently averaging over them.
+- **Verified before shipping:** 8 new unit tests for `auto_eda.py`
+  (numeric stats, category frequencies, exclusion behavior,
+  high-cardinality auto-skip, strong vs. weak correlation filtering,
+  empty-DataFrame edge case), a scripted integration check that inspects
+  the *actual* message sent to the mocked Groq client and confirms both
+  reports are present in the prompt text on both the initial call and a
+  retry/fix call, the full 44-test pytest suite passing, and a headless
+  `streamlit run` boot check.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)
