@@ -347,6 +347,51 @@ itself isn't built until Phase 4.
   of the UI's exact field-access logic against real quality reports — all
   before touching git.
 
+### Phase 13 — AST-based Code Safety Scanner ✅
+- **What it closes:** `ARCHITECTURE_BEFORE.md` (Phase 0 audit) flagged
+  "no security layer between code the LLM wrote and code that runs" as the
+  single highest-leverage gap in the system. The old flow was
+  `llm_client.py` generates code → `code_executor.py` hands it straight to
+  a subprocess. The system prompt *asks* the model to only use pandas and
+  matplotlib — nothing *enforced* that.
+- **How it works:** `app/security/code_scanner.py` parses generated code
+  into an AST (Abstract Syntax Tree) — Python's own structural
+  representation of code — and walks it looking for: disallowed imports
+  (`os`, `subprocess`, `socket`, `pickle`, etc.), disallowed bare builtin
+  calls (`eval`, `exec`, `open`, `__import__`, `getattr`/`setattr`, etc.),
+  and the classic Python sandbox-escape gadget attributes
+  (`__bases__`, `__subclasses__`, `__globals__`, ...) used to reach
+  dangerous functionality *without* ever writing a literal `import`
+  statement. AST parsing catches all of this structurally, so it isn't
+  fooled by string-concatenation or naming tricks the way a plain
+  "search the code for banned words" check would be — and it doesn't
+  false-positive on legitimate pandas methods that happen to share a name
+  with a banned builtin (`df.eval(...)` is fine; bare `eval(...)` isn't,
+  because they're different AST node shapes).
+- **Wired into the existing self-correction loop, not around it:**
+  `run_with_self_correction()` in `code_executor.py` now scans code
+  *before* calling `run_code()`. If it's flagged, the code is never
+  executed — the violation list is fed back to the LLM as if it were a
+  runtime error, using the exact same retry mechanism already built for
+  Phase 4, and it costs one of the same 3 retry attempts (a design
+  decision made deliberately: unsafe code is treated symmetrically with
+  code that crashes, rather than immediately failing the whole analysis).
+- **Still honest about the limits:** this is a second, cheap, fast layer
+  stacked *in front of* the subprocess sandbox from Phase 4 — it's not a
+  replacement for it, and a sufficiently obfuscated payload could
+  theoretically still find a gap. Defense in depth, not a silver bullet.
+- **Verified before shipping:** unit-tested the scanner against safe
+  pandas/matplotlib code, three realistic full analysis snippets styled
+  after real agent output, every category of banned import/call, the
+  sandbox-escape gadget chain, and a syntax error — then integration
+  tested the full retry loop with a mocked Groq client returning unsafe
+  code first and safe code on retry (confirmed: 2 API calls, unsafe code
+  never reached a subprocess, final result succeeded), plus a
+  never-becomes-safe case (confirmed: gives up cleanly after exactly 4
+  attempts, unsafe code never executed once), plus a full
+  `analyze_csv_file()` regression run and a headless `streamlit run` boot
+  check to confirm Phase 12 and Phase 13 work correctly together.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)

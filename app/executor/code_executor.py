@@ -13,6 +13,14 @@ Design decisions made here (confirmed with the developer before building):
   library — no extra paid tools.
 - The self-correction loop allows up to 3 retries (4 attempts total)
   before giving up and reporting failure honestly.
+
+Phase 13 addition: every piece of generated code is passed through
+app/security/code_scanner.py's scan_code() BEFORE it's ever handed to
+run_code(). If the scanner flags it, the code is never executed at all —
+instead, the violation list is fed back into the exact same
+self-correction path used for real runtime errors (confirmed with the
+developer: unsafe code costs a retry attempt, exactly like a crash would,
+rather than immediately failing the whole analysis).
 """
 
 import os
@@ -21,6 +29,7 @@ import sys
 import tempfile
 
 from app.agent.llm_client import generate_analysis_code
+from app.security.code_scanner import format_violations, scan_code
 
 MAX_RETRIES = 3
 TIMEOUT_SECONDS = 15
@@ -122,13 +131,30 @@ def run_with_self_correction(
     code = generate_analysis_code(profile)
 
     for attempt_number in range(1, max_retries + 2):  # 1 initial + N fixes
-        result = run_code(code, csv_path)
+        # Phase 13: check BEFORE running, not instead of running. A
+        # scanner flag skips run_code() entirely -- the code never
+        # touches a subprocess -- but is otherwise treated exactly like
+        # a runtime failure below, so the rest of the loop doesn't need
+        # to know or care which kind of failure this was.
+        scan_result = scan_code(code)
+        blocked_by_scanner = not scan_result["safe"]
+
+        if blocked_by_scanner:
+            result = {
+                "success": False,
+                "stdout": "",
+                "stderr": format_violations(scan_result["violations"]),
+            }
+        else:
+            result = run_code(code, csv_path)
+
         attempts.append({
             "attempt": attempt_number,
             "code": code,
             "success": result["success"],
             "stdout": result["stdout"],
             "stderr": result["stderr"],
+            "blocked_by_scanner": blocked_by_scanner,
         })
 
         if result["success"]:
