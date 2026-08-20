@@ -413,6 +413,31 @@ itself isn't built until Phase 4.
   retried into a valid one, and a full `analyze_csv_file()` + headless
   `streamlit run` regression check with Phases 12-14 all active together.
 
+### Phase 15 — pytest suite + GitHub Actions CI ✅
+- **36 automated tests** across `tests/test_csv_profiler.py`,
+  `test_data_quality.py`, `test_code_scanner.py`, `test_result_validator.py`,
+  `test_code_executor.py`, and `test_insights.py` — covering every module
+  built in Phases 2-14: ingestion edge cases (missing/empty/oversized
+  files), all four data-quality sub-scores and structural flags, every
+  category the AST scanner blocks (plus confirming it does NOT
+  false-positive on `df.eval(...)`), the validation layer's insight/PNG
+  checks, and full self-correction-loop integration tests (scanner-block-
+  then-retry, validation-fail-then-retry, exhausts-retries-and-gives-up).
+- **Groq is mocked everywhere** (`unittest.mock.patch` on
+  `app.agent.llm_client.Groq`) — no test makes a real network call or
+  needs an API key, so the suite runs identically for anyone who clones
+  the repo, with zero cost and zero secrets required.
+- **`.github/workflows/tests.yml`** runs the full suite on every push and
+  pull request against `main` via GitHub Actions — free for public repos.
+  Because nothing needs `GROQ_API_KEY`, there's nothing to configure as a
+  repo secret for CI to work.
+- **`requirements-dev.txt`** keeps `pytest` separate from
+  `requirements.txt` on purpose, so the production install (and the
+  Streamlit Community Cloud deploy) never pulls in test-only tooling.
+- **Verified before shipping:** ran the full suite locally — all 36 tests
+  pass — before ever pushing the workflow file, so the very first CI run
+  on GitHub is expected to go green immediately.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)
@@ -421,6 +446,7 @@ itself isn't built until Phase 4.
 - **Also included, not currently deployed**: FastAPI backend (`main.py`) and
   a `Dockerfile`, kept as working standalone artifacts (Phase 7 / Phase 10)
 - **Hosting**: [Streamlit Community Cloud](https://streamlit.io/cloud) (free)
+- **Testing / CI**: pytest, GitHub Actions (Phase 15)
 
 ## Running locally
 
@@ -436,6 +462,17 @@ That's it — one command, one terminal. (The FastAPI backend in `main.py` can
 still be run standalone with `uvicorn main:app --reload` if you want to hit
 `/analyze` directly or explore the interactive docs at `/docs`, but the
 Streamlit app no longer depends on it.)
+
+## Running the tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -v
+```
+
+No API key needed — every test that would otherwise touch the Groq API
+mocks it out. This is also what runs automatically on every push via
+GitHub Actions (`.github/workflows/tests.yml`).
 
 ## What I'd improve with more time
 

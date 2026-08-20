@@ -1,0 +1,4 @@
+# Phase 15: dev/test-only dependencies -- kept separate from
+# requirements.txt on purpose, so a production install (or the Streamlit
+# Community Cloud deploy) never pulls in test tooling it doesn't need.
+pytest
