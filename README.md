@@ -475,6 +475,73 @@ itself isn't built until Phase 4.
   retry/fix call, the full 44-test pytest suite passing, and a headless
   `streamlit run` boot check.
 
+### Phase 17 — Multi-Step Planning Agent ✅
+- **What it adds:** a separate LLM call, BEFORE any code is written, that
+  decides on an explicit `AnalysisPlan` (a goal sentence + 3-5 concrete
+  steps) — splitting "decide what to look at" from "write code to do it"
+  instead of one call doing both at once.
+- **`app/agent/planner.py`**: `generate_analysis_plan()` requests
+  structured JSON (Groq's `response_format: json_object` mode) and
+  validates it into a Pydantic `AnalysisPlan` model. A malformed/missing
+  response falls back to a generic-but-usable plan instead of raising —
+  planning is a nice-to-have, never allowed to take down the pipeline.
+- **Wired everywhere `quality_report`/`eda_summary` already flow**: the
+  plan is threaded through `analyze_csv_file()` → `analyze_and_structure()`
+  → `run_with_self_correction()` → every `generate_analysis_code()` call,
+  initial attempt and retries alike.
+- **Shown in the UI** as "Agent's Plan" — the goal and numbered steps,
+  rendered before the analysis even starts running.
+- **Verified before shipping:** unit tests covering a valid structured
+  response, a malformed-JSON fallback, a schema-mismatch fallback, and
+  the prompt-formatting helper; an insights-level test confirming a
+  planner failure (real network/auth error, unmocked on purpose) doesn't
+  break the overall pipeline.
+
+### Phase 18 — Automatic EDA Engine (deterministic charts) ✅
+- **What it adds:** a second, LLM-independent chart set, generated
+  directly from the DataFrame every run — distribution histograms for
+  the most variable numeric columns (ranked by coefficient of variation,
+  capped at 4), a correlation heatmap, and a missingness bar chart. Same
+  "deterministic pandas/matplotlib, no LLM" philosophy as
+  `data_quality.py`/`auto_eda.py`, but producing charts instead of stats.
+- **`app/eda/auto_charts.py`**: matplotlib (already a dependency) rather
+  than adding Plotly, so charts stay on the same static-PNG delivery path
+  (`st.image`) already used everywhere else.
+- **Always available**, independent of whether the LLM's own run
+  succeeds — computed in `analyze_csv_file()` before the agent loop even
+  starts, attached as `auto_eda_charts` (a list of file paths).
+- **Shown in the UI** in an "Automatic EDA" expander.
+- **Verified before shipping:** unit tests for chart generation, the
+  single-numeric-column skip (no heatmap), the nothing-missing skip (no
+  missingness chart), the distribution-chart cap, and that a previous
+  run's files are cleared before the next — plus visual inspection of
+  generated PNGs, and a scripted replay of the exact rendering logic
+  used in the UI against real datasets.
+
+### Phase 19 — Natural Language Data Chat ✅
+- **What it adds:** a follow-up chat interface under the main result —
+  "Why did sales fall in March?", "Show the top 10 customers", "Plot
+  that" — with the last few question/answer turns kept as context so a
+  vague follow-up like "plot that" can be resolved.
+- **Reuses the Phase 4/13/14 engine, doesn't duplicate it**: Phase 16's
+  `code_generator` injection point in `run_with_self_correction()` was
+  added specifically for this — a chat question becomes a differently
+  -prompted code generator (`app/agent/chat_agent.py`) plugged into the
+  exact same scan → run → validate → retry loop the main analysis uses.
+  Every chat answer goes through the same AST safety scanner and
+  post-execution validator as a normal run, for free.
+- **Session state, not a database**: conversation history and the
+  original uploaded bytes are kept in Streamlit's `session_state` (the
+  original temp CSV file is deleted right after the main analysis, so
+  each chat question rebuilds a fresh temp file from the retained
+  bytes). Starting a new analysis resets the chat history.
+- **Verified before shipping:** unit tests for a plain question, a
+  chart-producing question, conversation-history threading, unsafe code
+  being blocked and retried through chat exactly like the main path, and
+  the result shape — plus a manual multi-turn integration script
+  (mocked Groq) confirming a second turn's prompt actually contains the
+  first turn's Q&A and that chart files don't bleed between turns.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)
@@ -484,6 +551,7 @@ itself isn't built until Phase 4.
   a `Dockerfile`, kept as working standalone artifacts (Phase 7 / Phase 10)
 - **Hosting**: [Streamlit Community Cloud](https://streamlit.io/cloud) (free)
 - **Testing / CI**: pytest, GitHub Actions (Phase 15)
+- **Structured outputs**: Pydantic (Phase 17's `AnalysisPlan`)
 
 ## Running locally
 

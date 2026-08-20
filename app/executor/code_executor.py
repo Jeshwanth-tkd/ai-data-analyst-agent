@@ -137,28 +137,63 @@ def run_code(code: str, csv_path: str, timeout: int = TIMEOUT_SECONDS) -> dict:
         os.remove(tmp_path)
 
 
+def _default_code_generator(profile, quality_report, eda_summary, plan):
+    """
+    Builds the code_generator callable used when the caller doesn't
+    supply their own -- captures profile/quality_report/eda_summary/plan
+    once, and returns a function matching the (previous_code,
+    error_message) -> code shape every code_generator must have.
+    """
+    def generate(previous_code: str = None, error_message: str = None) -> str:
+        return generate_analysis_code(
+            profile,
+            previous_code=previous_code,
+            error_message=error_message,
+            quality_report=quality_report,
+            eda_summary=eda_summary,
+            plan=plan,
+        )
+    return generate
+
+
 def run_with_self_correction(
     profile: dict,
     csv_path: str,
     max_retries: int = MAX_RETRIES,
     quality_report: dict = None,
     eda_summary: dict = None,
+    plan=None,
+    code_generator=None,
 ) -> dict:
     """
-    The full agentic loop: ask the LLM for code, run it, and if it
-    fails, feed the error back to the LLM and ask it to fix its own
-    code — up to `max_retries` additional attempts after the first.
+    The full agentic loop: ask for code, run it, and if it fails, feed
+    the error back and ask for a fix — up to `max_retries` additional
+    attempts after the first.
 
     Phase 16: `quality_report` and `eda_summary` (both optional) are
-    passed straight through to every generate_analysis_code() call below
-    — the first attempt and every retry — so the LLM has that context
-    for the whole loop, not just the initial attempt.
+    passed straight through to every code-generation call — the first
+    attempt and every retry — so the LLM has that context for the whole
+    loop, not just the initial attempt. Phase 17 adds `plan` alongside
+    them the same way.
+
+    Phase 19: `code_generator` is an optional injection point. By
+    default this loop builds one from generate_analysis_code() (the
+    "explore this dataset" agent) using profile/quality_report/
+    eda_summary/plan above -- but a caller can pass its own callable
+    with signature (previous_code, error_message) -> code instead, to
+    reuse this exact same scan → run → validate → retry engine for a
+    DIFFERENT code-writing task (e.g. the Phase 19 data-chat agent
+    answering one specific question) without duplicating any of the
+    safety/retry logic below.
 
     Returns a dict describing the final outcome plus a full history of
     every attempt made, so we can show/debug the whole process later.
     """
+    if code_generator is None:
+        code_generator = _default_code_generator(profile, quality_report, eda_summary, plan)
+
     attempts = []
-    code = generate_analysis_code(profile, quality_report=quality_report, eda_summary=eda_summary)
+    code = code_generator()
 
     for attempt_number in range(1, max_retries + 2):  # 1 initial + N fixes
         # Phase 13: check BEFORE running, not instead of running. A
@@ -216,13 +251,7 @@ def run_with_self_correction(
             break
 
         print(f"Attempt {attempt_number} failed — asking the LLM to fix it...")
-        code = generate_analysis_code(
-            profile,
-            previous_code=code,
-            error_message=result["stderr"],
-            quality_report=quality_report,
-            eda_summary=eda_summary,
-        )
+        code = code_generator(previous_code=code, error_message=result["stderr"])
 
     return {
         "success": False,

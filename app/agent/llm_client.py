@@ -14,6 +14,12 @@ unchanged -- when present, they're folded into the prompt so the LLM
 can skip known-junk columns (constant/ID-like), stay aware of type
 mismatches and outliers already found, and build on top of baseline
 stats/correlations instead of re-deriving them from scratch.
+
+Phase 17 addition: an optional `plan` (an app.agent.planner.AnalysisPlan,
+produced by a separate planning call BEFORE this one) can also be
+included, so the code this function generates follows the goal/steps
+already decided on rather than the model re-deciding what to look at
+from scratch on every call.
 """
 
 import os
@@ -76,12 +82,12 @@ def _extract_code(raw_response: str) -> str:
     return raw_response.strip()
 
 
-def _build_context_blocks(quality_report: dict = None, eda_summary: dict = None) -> str:
+def _build_context_blocks(quality_report: dict = None, eda_summary: dict = None, plan=None) -> str:
     """
-    Shared helper: render the optional Phase 12 / Phase 16 reports as
-    extra JSON blocks. Returns "" (nothing appended) when both are
-    None, so a caller that doesn't pass them gets the exact same
-    message shape as before Phase 16 -- fully backward compatible.
+    Shared helper: render the optional Phase 12 / Phase 16 / Phase 17
+    context as extra text blocks. Returns "" (nothing appended) when all
+    three are None, so a caller that doesn't pass them gets the exact
+    same message shape as before Phase 16 -- fully backward compatible.
     """
     blocks = ""
     if quality_report is not None:
@@ -95,14 +101,17 @@ def _build_context_blocks(quality_report: dict = None, eda_summary: dict = None)
             "(build on this, don't just repeat it):\n"
             f"{json.dumps(eda_summary, indent=2, default=str)}"
         )
+    if plan is not None:
+        from app.agent.planner import format_plan_for_prompt
+        blocks += f"\n\nFollow this analysis plan, already decided on:\n{format_plan_for_prompt(plan)}"
     return blocks
 
 
-def _build_initial_message(profile: dict, quality_report: dict = None, eda_summary: dict = None) -> str:
+def _build_initial_message(profile: dict, quality_report: dict = None, eda_summary: dict = None, plan=None) -> str:
     return (
         "Here is the profile of the dataset (already loaded as `df`):\n\n"
         f"{json.dumps(profile, indent=2, default=str)}"
-        f"{_build_context_blocks(quality_report, eda_summary)}"
+        f"{_build_context_blocks(quality_report, eda_summary, plan)}"
     )
 
 
@@ -112,6 +121,7 @@ def _build_fix_message(
     error_message: str,
     quality_report: dict = None,
     eda_summary: dict = None,
+    plan=None,
 ) -> str:
     return (
         "The Python code below was written to analyze the dataset profile shown "
@@ -121,7 +131,7 @@ def _build_fix_message(
         f"Error message it produced:\n{error_message}\n\n"
         f"Dataset profile (already loaded as `df`):\n"
         f"{json.dumps(profile, indent=2, default=str)}"
-        f"{_build_context_blocks(quality_report, eda_summary)}\n\n"
+        f"{_build_context_blocks(quality_report, eda_summary, plan)}\n\n"
         "Respond with ONLY the corrected, fenced Python code block."
     )
 
@@ -132,6 +142,7 @@ def generate_analysis_code(
     error_message: str = None,
     quality_report: dict = None,
     eda_summary: dict = None,
+    plan=None,
 ) -> str:
     """
     Send a dataset profile to the LLM and return the Python analysis
@@ -144,20 +155,21 @@ def generate_analysis_code(
     for both "write code" and "fix code", since the API call itself is
     identical; only the message we send differs.
 
-    `quality_report` (Phase 12) and `eda_summary` (Phase 16) are both
-    optional and, when given, are included on EVERY call — initial
-    attempt and every fix attempt alike — so the model stays aware of
-    known data issues and baseline stats throughout the whole retry loop,
-    not just on the first try.
+    `quality_report` (Phase 12), `eda_summary` (Phase 16), and `plan`
+    (Phase 17's AnalysisPlan) are all optional and, when given, are
+    included on EVERY call — initial attempt and every fix attempt alike
+    — so the model stays aware of known data issues, baseline stats, and
+    the agreed plan throughout the whole retry loop, not just on the
+    first try.
     """
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
     if previous_code and error_message:
         user_message = _build_fix_message(
-            profile, previous_code, error_message, quality_report, eda_summary
+            profile, previous_code, error_message, quality_report, eda_summary, plan
         )
     else:
-        user_message = _build_initial_message(profile, quality_report, eda_summary)
+        user_message = _build_initial_message(profile, quality_report, eda_summary, plan)
 
     response = client.chat.completions.create(
         model=MODEL,

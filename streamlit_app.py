@@ -22,6 +22,16 @@ swappable frontend the way it was talking to a backend over HTTP. For a
 solo portfolio project favoring "actually deployed and free" over
 "perfectly decoupled services," that's a reasonable trade -- and it's
 worth being able to explain *why* in an interview.
+
+Phase 17/18 additions: renders the agent's plan (goal + steps) and a
+deterministic, LLM-independent "Automatic EDA" chart set, both attached
+to analyze_csv_file()'s result dict.
+
+Phase 19 addition: a chat section below the main result, backed by
+app.agent.chat_agent.answer_data_question(). The uploaded file's raw
+bytes (not the temp path, which gets deleted right after the main
+analysis) are kept in session_state so each chat question can rebuild
+its own temp CSV file on demand.
 """
 
 import os
@@ -29,6 +39,8 @@ import tempfile
 
 import streamlit as st
 
+from app.agent.chat_agent import answer_data_question
+from app.ingestion.csv_profiler import profile_csv
 from app.output.insights import analyze_csv_file
 
 st.set_page_config(page_title="AI Data Analyst Agent", page_icon="📊")
@@ -69,6 +81,13 @@ if uploaded_file is not None and st.button("Analyze"):
             # reruns (e.g. if the user interacts with something else on
             # the page) without needing to re-run the whole analysis.
             st.session_state["result"] = result
+            # Phase 19: keep the raw CSV bytes around (not the temp path
+            # itself, which we're about to delete) so the chat section
+            # below can write a fresh temp file per question. Starting a
+            # new analysis always resets the chat history -- old Q&A
+            # about a different dataset shouldn't linger.
+            st.session_state["uploaded_bytes"] = uploaded_file.getvalue()
+            st.session_state["chat_history"] = []
         finally:
             os.remove(tmp_path)
 
@@ -117,6 +136,26 @@ if "result" in st.session_state:
                 for note in flag_notes:
                     st.write(f"- {note}")
 
+    # Phase 17: show the plan the agent decided on before it wrote any
+    # code. plan is None if planning itself failed (e.g. malformed LLM
+    # response) -- code generation still works fine without it, so this
+    # section just doesn't render rather than showing an error.
+    plan = result.get("plan")
+    if plan:
+        st.subheader("Agent's Plan")
+        st.write(f"**Goal:** {plan['goal']}")
+        for i, step in enumerate(plan["steps"], start=1):
+            st.write(f"{i}. {step}")
+
+    # Phase 18: deterministic EDA charts, independent of the LLM run --
+    # shown regardless of success/failure below, same reasoning as Data
+    # Health above.
+    auto_charts = result.get("auto_eda_charts")
+    if auto_charts:
+        with st.expander(f"Automatic EDA ({len(auto_charts)} charts, no LLM involved)"):
+            for chart_path in auto_charts:
+                st.image(chart_path)
+
     if result["success"]:
         st.success("Analysis complete!")
 
@@ -135,3 +174,56 @@ if "result" in st.session_state:
                 st.image(chart_path)
     else:
         st.error(f"Analysis failed: {result['error']}")
+
+    # Phase 19: natural language data chat. Only shown once a dataset has
+    # actually been analyzed (we need uploaded_bytes to rebuild a temp
+    # CSV file for each question -- run_code()'s wrapper script reads the
+    # file from a real path, it doesn't accept an in-memory DataFrame).
+    if "uploaded_bytes" in st.session_state:
+        st.subheader("Ask a follow-up question")
+
+        for turn in st.session_state.get("chat_history", []):
+            with st.chat_message("user"):
+                st.write(turn["question"])
+            with st.chat_message("assistant"):
+                st.write(turn["answer"])
+                if turn.get("chart"):
+                    st.image(turn["chart"])
+
+        question = st.chat_input("e.g. \"Why did sales fall in March?\" or \"Plot that\"")
+        if question:
+            with st.chat_message("user"):
+                st.write(question)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    # Re-materialize the CSV from the bytes kept in
+                    # session_state -- the original temp file from the
+                    # main analysis run was already deleted.
+                    with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
+                        tmp.write(st.session_state["uploaded_bytes"])
+                        chat_tmp_path = tmp.name
+
+                    try:
+                        chat_profile = profile_csv(chat_tmp_path)
+                        chat_result = answer_data_question(
+                            chat_profile,
+                            chat_tmp_path,
+                            question,
+                            conversation_history=st.session_state.get("chat_history", []),
+                            quality_report=st.session_state["result"].get("data_quality"),
+                        )
+                    finally:
+                        os.remove(chat_tmp_path)
+
+                if chat_result["success"]:
+                    st.write(chat_result["answer"])
+                    if chat_result["chart"]:
+                        st.image(chat_result["chart"])
+                    st.session_state["chat_history"].append({
+                        "question": question,
+                        "answer": chat_result["answer"],
+                        "chart": chat_result["chart"],
+                    })
+                else:
+                    st.error(f"Couldn't answer that: {chat_result['error']}")

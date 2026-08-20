@@ -21,15 +21,32 @@ shown to the user afterward). Columns already flagged constant/ID-like
 by the quality report are excluded from the EDA summary's category
 breakdown, since they're already known to be meaningless.
 
-This module doesn't talk to the LLM or run any code itself — it takes
-the raw result of Phase 4's execution loop and structures it into
-something a future API/frontend can actually use: a clean list of
-insight strings, and a list of chart image files that were produced.
+Phase 17 addition: before code is generated, a separate planning call
+(app.agent.planner.generate_analysis_plan()) decides on a goal + a
+handful of concrete steps, and that plan is threaded through to the code
+generator alongside quality_report/eda_summary. The result dict gains a
+"plan" key (a plain dict, or None if planning itself failed) so the UI
+can show what the agent intended to do.
+
+Phase 18 addition: a second, LLM-independent chart set
+(app.eda.auto_charts.generate_auto_eda_charts()) is generated directly
+from the DataFrame -- distribution histograms, a correlation heatmap,
+and a missingness chart, always available regardless of whether the
+LLM's own run succeeds. Attached as "auto_eda_charts" (a list of file
+paths, possibly empty).
+
+This module doesn't talk to the LLM or run any code itself (aside from
+calling the planner) — it takes the raw result of Phase 4's execution
+loop and structures it into something a future API/frontend can
+actually use: a clean list of insight strings, and a list of chart
+image files that were produced.
 """
 
 import glob
 import os
 
+from app.agent.planner import generate_analysis_plan
+from app.eda.auto_charts import generate_auto_eda_charts
 from app.eda.auto_eda import compute_auto_eda
 from app.executor.code_executor import run_with_self_correction
 from app.ingestion.csv_profiler import load_csv, profile_dataframe
@@ -75,18 +92,20 @@ def analyze_and_structure(
     csv_path: str,
     quality_report: dict = None,
     eda_summary: dict = None,
+    plan=None,
 ) -> dict:
     """
     The full Phase 2-5 pipeline in one call: run the self-correcting
     agent loop (Phase 4), then structure whatever it produced into
     clean insights + chart paths. Phase 16: quality_report/eda_summary
     are optional and, when given, are threaded straight through to the
-    agent loop so the LLM actually sees them.
+    agent loop so the LLM actually sees them. Phase 17 adds `plan`
+    (an app.agent.planner.AnalysisPlan) the same way.
     """
     clear_outputs_dir()
 
     execution_result = run_with_self_correction(
-        profile, csv_path, quality_report=quality_report, eda_summary=eda_summary
+        profile, csv_path, quality_report=quality_report, eda_summary=eda_summary, plan=plan
     )
 
     if not execution_result["success"]:
@@ -143,6 +162,9 @@ def analyze_csv_file(csv_path: str) -> dict:
             quality_report["structural_flags"]["id_like_columns"]
         )
         eda_summary = compute_auto_eda(df, exclude_columns=junk_columns)
+        # Phase 18: deterministic charts, independent of the LLM loop
+        # below -- computed here so they exist even if the LLM run fails.
+        auto_eda_charts = generate_auto_eda_charts(df)
     except Exception as e:
         return {
             "success": False,
@@ -151,11 +173,22 @@ def analyze_csv_file(csv_path: str) -> dict:
             "error": f"Could not read the CSV file: {e}",
             "attempts": [],
             "data_quality": None,
+            "plan": None,
+            "auto_eda_charts": [],
         }
+
+    # Phase 17: decide on a plan before writing any code. generate_analysis_plan()
+    # already never raises (it falls back to a generic plan internally), but this
+    # is wrapped anyway -- planning is a nice-to-have, not something that should
+    # ever be allowed to take down the whole analysis if something unexpected happens.
+    try:
+        plan = generate_analysis_plan(profile, quality_report=quality_report, eda_summary=eda_summary)
+    except Exception:
+        plan = None
 
     try:
         result = analyze_and_structure(
-            profile, csv_path, quality_report=quality_report, eda_summary=eda_summary
+            profile, csv_path, quality_report=quality_report, eda_summary=eda_summary, plan=plan
         )
     except Exception as e:
         result = {
@@ -166,11 +199,13 @@ def analyze_csv_file(csv_path: str) -> dict:
             "attempts": [],
         }
 
-    # Attach the quality report regardless of whether the LLM/execution
-    # side succeeded or failed -- data quality is independent of the
-    # agent loop's outcome, and it's still genuinely useful to show a
-    # user "here's what we know about your data" even on a failed run.
+    # Attach the quality report, plan, and auto-EDA charts regardless of
+    # whether the LLM/execution side succeeded or failed -- all three are
+    # independent of the agent loop's outcome, and are still genuinely
+    # useful to show a user even on a failed run.
     result["data_quality"] = quality_report
+    result["plan"] = plan.model_dump() if plan is not None else None
+    result["auto_eda_charts"] = auto_eda_charts
     return result
 
 
@@ -189,6 +224,18 @@ if __name__ == "__main__":
     if result.get("data_quality"):
         print(f"Data health score: {result['data_quality']['overall_score']}/100")
         print(f"  {result['data_quality']['scores']}\n")
+
+    if result.get("plan"):
+        print(f"Agent's plan -- goal: {result['plan']['goal']}")
+        for i, step in enumerate(result["plan"]["steps"], start=1):
+            print(f"  {i}. {step}")
+        print()
+
+    if result.get("auto_eda_charts"):
+        print(f"Automatic EDA charts (no LLM): {len(result['auto_eda_charts'])}")
+        for chart in result["auto_eda_charts"]:
+            print(f"  - {chart}")
+        print()
 
     if result["success"]:
         print(f"Insights found: {len(result['insights'])}")
