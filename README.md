@@ -1,20 +1,54 @@
 # AI-Powered Data Analyst Agent
 
-An agent that takes an uploaded CSV, autonomously writes and executes its own
-Python analysis code using an LLM, generates insights and charts, and
-self-corrects if the generated code errors out on malformed data.
+An agentic data analysis system: upload a CSV, Excel, JSON, or Parquet file
+and it autonomously plans an analysis, writes and executes its own Python
+code against your specific dataset, self-corrects when that code errors out
+on malformed data, and generates insights, charts, and a downloadable report
+— alongside deterministic (non-LLM) data quality scoring, automatic EDA,
+anomaly detection, statistical hypothesis testing, a data cleaning agent,
+time-series forecasting, a natural-language chat interface for follow-up
+questions, and a read-only SQL analyst as a second way to query the data.
 
 Built as a portfolio project, phase by phase, with a focus on understanding
-every piece rather than scaffolding it all at once.
+every piece rather than scaffolding it all at once — the full phase-by-phase
+build log is below.
 
 **🔗 Live demo:** https://ai-data-analyst-agent-j2hnysterzf5yhjhathkqe.streamlit.app/
 *(Free-tier hosting — if the app shows a "wake up" screen, it just went to sleep from inactivity; one click and it's back in ~15 seconds.)*
 
 ## Screenshots
 
-![Upload screen with insights](screenshots/upload.png)
-![Insights and generated charts](screenshots/results.png)
-![Chart detail](screenshots/charts.png)
+*(Updated screenshots coming soon — the ones previously here were from the
+original 11-phase MVP and no longer reflect the current UI.)*
+
+## What it does
+
+- **Core agent loop:** plans an analysis, writes Python code against your
+  dataset, executes it in an isolated subprocess, and self-corrects (up to
+  3 retries) if the code errors out — feeding the real error back to the LLM
+  rather than giving up.
+- **Multi-format ingestion:** CSV, Excel (`.xlsx`/`.xls`), JSON, and Parquet,
+  all normalized through the same safety checks (size cap, empty-file
+  rejection).
+- **Deterministic reports, computed with plain pandas/scipy/scikit-learn —
+  zero LLM calls, so they're fast, free, and reproducible:** a data quality
+  health score, automatic EDA (distributions, correlations, missingness),
+  anomaly detection (per-column z-scores + Isolation Forest), automatic
+  hypothesis testing (t-tests/ANOVA between categorical and numeric
+  columns), a data cleaning agent (suggests and conservatively auto-applies
+  fixes), and time-series forecasting (Holt's linear trend) when a
+  date + numeric column pair is found.
+- **Two safety layers for every code path that runs generated code:** an
+  AST-based static scanner blocking dangerous imports/calls, backed by a
+  structurally independent second layer — real OS-level subprocess
+  isolation for Python, and a genuinely read-only SQLite connection for SQL.
+- **Talk to your data two ways:** a natural-language chat agent for
+  follow-up questions, and a SQL Analyst that generates and runs read-only
+  SQL against the same dataset.
+- **One-click downloadable HTML report** bundling every section above —
+  insights, every chart (embedded, not linked), data quality, the agent's
+  plan, EDA, anomalies, stats, cleaning suggestions, and forecast — into a
+  single self-contained, offline-viewable file.
 
 ## Results
 
@@ -23,29 +57,51 @@ analysis on a 200-row dataset in **6.5 seconds**, versus **3.7 minutes**
 doing the same fixed checklist of analysis by hand — a **97% reduction** in
 my own analysis time on that dataset (single trial, full methodology and
 honest caveats in `tests/benchmark_results.md` and the Phase 9 log below).
+That benchmark predates the deterministic reports, cleaning agent,
+forecasting, and chat/SQL features added in later phases — it measures the
+original core agent loop only, not the full current feature set.
 
 ## Why this project
 
-Most "AI data analyst" demos just wrap an LLM around `df.describe()`. This one
-is agentic in the real sense: the LLM writes actual Python analysis code for
-*this specific dataset*, that code is executed in a controlled loop, and if it
-fails (bad dtypes, missing values, malformed input) the error is fed back to
-the LLM so it can fix its own code and retry — without a human in the loop.
+Most "AI data analyst" demos just wrap an LLM around `df.describe()`. This
+one is agentic in the real sense: the LLM writes actual Python analysis code
+for *this specific dataset*, that code is executed in a controlled loop, and
+if it fails (bad dtypes, missing values, malformed input) the error is fed
+back to the LLM so it can fix its own code and retry — without a human in
+the loop. It's also deliberately not *only* an LLM: every report that's
+pure arithmetic (data quality, EDA, anomalies, stats) is computed
+deterministically, reserving the LLM for the genuinely ambiguous judgment
+calls (what to analyze, how to phrase an insight, how to answer a
+free-text question) rather than routing everything through an API call.
 
-## Architecture (evolving as we build)
+## Architecture
 
 ```
 app/
-├── ingestion/   # Load + profile any uploaded CSV (dtypes, nulls, shape)
-├── agent/       # Groq LLM client + the "data analyst" system prompt
-├── executor/    # Sandboxed execution of LLM-generated code + self-correction
-└── output/      # Structuring insights and saving charts
+├── ingestion/    # Load + profile any uploaded file (CSV/Excel/JSON/Parquet)
+├── quality/      # Deterministic data quality health score
+├── eda/          # Automatic EDA summary + deterministic charts
+├── anomalies/    # Z-score + Isolation Forest anomaly detection
+├── stats/        # Automatic hypothesis testing (t-test/ANOVA)
+├── cleaning/     # Data cleaning agent (suggest + conservatively apply)
+├── forecasting/  # Time-series forecasting (Holt's linear trend)
+├── agent/        # Groq LLM client, system prompts, planner, chat agent
+├── executor/     # Sandboxed execution of LLM-generated code + self-correction
+├── security/     # AST-based static code safety scanner
+├── validation/   # Post-execution output validation (real insights? valid charts?)
+├── sql/          # SQL Analyst: generation, scanner, read-only execution
+├── output/       # The top-level pipeline: ties every module above together
+├── report/       # Self-contained HTML report generation
+└── ui/           # Reusable Streamlit UI components (chart carousel)
 ```
 
-The `agent/` (decides *what* code to run) and `executor/` (actually *runs* it)
-are kept as separate modules on purpose — that boundary is the core safety
-design of this system, and it's set up from day one even though the executor
-itself isn't built until Phase 4.
+The `agent/` (decides *what* code to run) and `executor/` (actually *runs*
+it) are kept as separate modules on purpose — that boundary is the core
+safety design of this system, set up from day one even though the executor
+itself isn't built until Phase 4. Every later addition follows the same
+principle of keeping deterministic computation, LLM decision-making, and
+execution/safety concerns in separate, single-purpose modules rather than
+one growing file.
 
 ## Build log
 
@@ -944,3 +1000,11 @@ credible than a project that claims to have none.
   malformed inputs (see Phase 6) — harmless here, but a good example of
   where I chose to document a limitation rather than spend disproportionate
   effort engineering around a rare, low-stakes edge case.
+- **Forecasting's auto-detection picks the *first* numeric column, not
+  necessarily the most meaningful one** (Phase 25) — on a dataset whose
+  first numeric column happens to be an ID-shaped field, that's what gets
+  forecast, which is technically correct but not especially useful. A
+  proper fix would need either a "which column?" picker in the UI or a
+  smarter heuristic (e.g. deprioritizing near-unique integer columns) —
+  left as-is for now rather than guessing at a heuristic without evidence
+  it actually picks better columns in practice.
