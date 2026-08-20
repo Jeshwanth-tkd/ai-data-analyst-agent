@@ -9,9 +9,8 @@ anomaly detection, statistical hypothesis testing, a data cleaning agent,
 time-series forecasting, a natural-language chat interface for follow-up
 questions, and a read-only SQL analyst as a second way to query the data.
 
-Built as a portfolio project, phase by phase, with a focus on understanding
-every piece rather than scaffolding it all at once — the full phase-by-phase
-build log is below.
+Built phase by phase, with a focus on understanding every piece rather than
+scaffolding it all at once — the full phase-by-phase build log is below.
 
 **🔗 Live demo:** https://ai-data-analyst-agent-j2hnysterzf5yhjhathkqe.streamlit.app/
 *(Free-tier hosting — if the app shows a "wake up" screen, it just went to sleep from inactivity; one click and it's back in ~15 seconds.)*
@@ -54,11 +53,14 @@ original 11-phase MVP and no longer reflect the current UI.)*
 
 In a timed personal test, this agent completed first-pass exploratory data
 analysis on a 200-row dataset in **6.5 seconds**, versus **3.7 minutes**
-doing the same fixed checklist of analysis by hand — a **97% reduction** in
-my own analysis time on that dataset (single trial, full methodology and
-honest caveats in `tests/benchmark_results.md` and the Phase 9 log below).
-That figure measures the **original core agent loop only** (Phase 4) — the
-part that needs an LLM call.
+doing the same fixed checklist of analysis by hand (single trial, full
+methodology and honest caveats in `tests/benchmark_results.md` and the
+Phase 9 log below). That 6.5s figure measures the **original core agent
+loop only** (Phase 4) — the part that needs an LLM call. Adding a freshly
+re-measured 1.12s for the deterministic reports Phases 12-26 added since
+then (now part of every real run, on the same dataset) brings the total to
+7.62s — a **96.6% reduction** in my own analysis time, the more
+representative figure for the current full pipeline.
 
 Separately, the deterministic reports added in Phases 12-26 (data quality,
 automatic EDA, anomaly detection, statistical testing, the cleaning agent,
@@ -369,25 +371,23 @@ one growing file.
   which is exactly what `os.environ.get("GROQ_API_KEY")` already expected.
   The app auto-redeploys on every push to `main`.
 
-### Phase 11 — Resume/Portfolio Packaging ✅
+### Phase 11 — Documentation & Write-up ✅
 - **Backfilled entry, written retroactively:** this phase's actual work
-  (final README polish, the live demo link + screenshots, an honest
-  "what I'd improve" write-up) was done at the time, alongside Phase 10,
-  but the log entry itself got skipped when the original 11-phase plan
-  was extended into the larger phase list below — caught and filled in
-  here rather than left as a silent gap in the build history.
-- **Live demo link + screenshots**, both already at the top of this
-  README (added right after Phase 10's deployment): the deployed app
-  URL plus three screenshots (upload screen, insights/charts, chart
-  detail) so a reviewer sees the working product before reading a single
-  line of the build log.
+  (final README polish, the live demo link, an honest "what I'd improve"
+  write-up) was done at the time, alongside Phase 10, but the log entry
+  itself got skipped when the original 11-phase plan was extended into
+  the larger phase list below — caught and filled in here rather than
+  left as a silent gap in the build history.
+- **Live demo link**, at the top of this README (added right after
+  Phase 10's deployment) so a reviewer can open the working app before
+  reading a single line of the build log.
 - **The honest "what I'd improve with more time" section** (bottom of
   this README): written and kept up to date since this phase, covering
   subprocess-vs-container sandboxing, untuned retry/timeout constants,
   the single-process chart-serving assumption, the one-trial time-saved
   number, no streaming progress, and a known column-type-detection edge
-  case — the deliberate goal being that an honest limitations list reads
-  as more credible to a reviewer than a project that claims to have none.
+  case — the deliberate goal being that an honest limitations list is
+  more credible than a project that claims to have none.
 - **The architecture write-up** — the `Architecture` section above and
   each phase's own log entry together form the "explain what you built
   and why" narrative this phase called for, rather than a single
@@ -904,8 +904,7 @@ one growing file.
   self-contained component has no external dependency, no
   version-compatibility risk against whatever Streamlit version
   Community Cloud runs, and is small enough to fully explain in an
-  interview — an actual advantage for a portfolio project, not just a
-  cost-saving shortcut.
+  interview — a real advantage, not just a cost-saving shortcut.
 - **`components.html()` renders each call in its own `<iframe>`**, so
   multiple carousels on the same page (Charts, Automatic EDA, Forecast)
   never collide with each other's element IDs or JS state — verified by
@@ -1011,10 +1010,11 @@ credible than a project that claims to have none.
   (Vercel) incompatible. A version meant to scale as two independent
   services would upload generated charts to object storage and pass back
   a URL instead.
-- **The "97% time saved" number is one trial, one dataset, one person**
-  (Phase 9) — real, honestly measured, but not something I'd present as a
-  statistically validated average without running it across more datasets,
-  more trials, and ideally someone other than me doing the manual side.
+- **The 96.6%/97.1% time-saved numbers are one trial, one dataset, one
+  person** (Phase 9, recalculated in Phase 27) — real, honestly measured,
+  but not something I'd present as a statistically validated average
+  without running it across more datasets, more trials, and ideally
+  someone other than me doing the manual side.
 - **No streaming progress.** The UI shows one opaque "agent is thinking"
   spinner rather than live status per step (profiling → generating code →
   running → retrying). That would need the backend to stream updates

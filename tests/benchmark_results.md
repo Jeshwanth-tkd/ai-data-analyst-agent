@@ -7,12 +7,24 @@ personally measured with `manual_eda_timer.py`, following
 | Dataset | Rows | Agent time (s) | Manual time (min) | Manual time (s) | Time saved |
 |---|---|---|---|---|---|
 | sample_sales.csv | 10 | 12.0 | — (not measured) | — | — |
-| employee_hr.csv | 200 | 6.5 | 3.7 | 224 | **97.1%** |
+| employee_hr.csv | 200 | 6.5 | 3.7 | 224 | 97.1% (Phase 9 loop only) |
 | movie_ratings.csv | 200 | 6.2 | — (not measured) | — | — |
 
-**Measured time saved (employee_hr.csv, single trial): 97.1%**
+**Measured time saved (employee_hr.csv, single trial, Phase 9 agent loop only): 97.1%**
 
 *(Time saved = (manual_seconds - agent_seconds) / manual_seconds × 100 = (224 - 6.5) / 224 × 100)*
+
+**More conservative figure, recalculated in Phase 27 (see the section below
+for methodology): 96.6%** — the Phase 9 agent time (6.5s) plus a freshly
+re-measured 1.12s of deterministic-report overhead (Phases 12-26's data
+quality, EDA, anomalies, stats, cleaning, and forecast reports, all now
+part of every real run) on the same `employee_hr.csv` dataset:
+(224 − 7.62) / 224 × 100 = **96.6%**. This is the more representative
+number for "how long does the CURRENT full pipeline take end to end"
+(still excluding the LLM step itself, which needs a real API key to
+time honestly) — it moves only half a point from the original figure
+because 224 seconds of manual time so heavily dominates the comparison
+that even real added overhead barely shifts the percentage.
 
 ## Honest notes / caveats
 
@@ -34,13 +46,13 @@ personally measured with `manual_eda_timer.py`, following
 - Agent times for `sample_sales.csv` and `movie_ratings.csv` are
   recorded above for reference, but have no manual-time counterpart to
   compare against (manual EDA wasn't repeated for those datasets).
-- **Honest resume-safe phrasing:** "In a timed personal test, an AI
-  agent I built completed first-pass exploratory data analysis on a
-  200-row dataset in 6.5 seconds versus 3.7 minutes doing the same
-  analysis manually — a 97% reduction in my own analysis time on that
-  dataset." This is accurate to what was actually measured; avoid
-  phrasing that implies this was tested across many datasets/analysts,
-  since it wasn't.
+- **Accurate phrasing:** "In a timed personal test, an AI agent I built
+  completed first-pass exploratory data analysis on a 200-row dataset in
+  6.5 seconds versus 3.7 minutes doing the same analysis manually — a
+  97% reduction in my own analysis time on that dataset (96.6% including
+  the deterministic reports added in later phases)." This is accurate to
+  what was actually measured; avoid phrasing that implies this was
+  tested across many datasets/analysts, since it wasn't.
 
 ## Phase 27 addition: deterministic reports (Phases 12-26), timed separately
 
@@ -96,3 +108,12 @@ number.
   `app/output/insights.py` (`statistical_tests.py` itself needed no
   change) to only exclude genuinely constant columns from the numeric
   side, pinned with a regression test in `tests/test_insights.py`.
+- **A separate, smaller recalculation** (not this table, the one in the
+  "More conservative figure" note above): the same six deterministic
+  reports were re-run specifically on `employee_hr.csv` — the exact
+  dataset the original 97.1% figure used — to get a real, directly
+  comparable "current full pipeline overhead" number (1.12s across 3
+  warm runs) to add on top of the original 6.5s, producing the 96.6%
+  conservative figure. `movie_ratings.csv` was used for the table above
+  instead specifically so this document has two independent
+  measurements on two different datasets, not the same one reused twice.
