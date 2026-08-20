@@ -124,11 +124,20 @@ st.markdown(
     }
 
     /* Expanders: card-like, so each report section reads as a distinct
-       block instead of blending into the page. */
+       block instead of blending into the page. No background color is
+       set here on purpose -- an earlier version hardcoded a light
+       background (#fafbfc), which clashed with Streamlit's dark theme
+       (light text on a near-white box) and made text unreadable. A
+       CSS-variable version was tried next (var(--secondary-background-color)),
+       but this Streamlit version doesn't actually expose that as a
+       global custom property, so it silently fell back to the same
+       broken light color. Leaving background unset lets Streamlit's
+       own theme-aware expander background show through correctly in
+       both light and dark mode; only the border is styled here, using
+       a semi-transparent gray that reads fine against either theme. */
     div[data-testid="stExpander"] {
-        border: 1px solid #e3e6ea;
+        border: 1px solid rgba(128, 128, 128, 0.35);
         border-radius: 10px;
-        background: #fafbfc;
     }
 
     /* Metrics (Data Health scores): tighter, bolder numbers. */
