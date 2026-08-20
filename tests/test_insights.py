@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 from app.output.insights import analyze_csv_file
 
 SAMPLE_CSV = "data/samples/sample_sales.csv"
+TIMESERIES_CSV = "data/samples/daily_sales_timeseries.csv"
 
 EXPECTED_KEYS = {
     "success", "insights", "charts", "error", "attempts",
@@ -58,6 +59,28 @@ def test_analyze_csv_file_success_path_has_expected_shape():
     assert result["report_path"] is not None
     import os
     assert os.path.exists(result["report_path"])
+
+
+def test_statistical_tests_are_not_blocked_by_id_like_numeric_column():
+    # Phase 27 regression test: daily_sales_timeseries.csv's only
+    # numeric column ("daily_sales") is flagged id-like by Phase 12's
+    # quality report (continuous values are routinely >95% unique) --
+    # before the Phase 27 fix, statistical_tests reused the full
+    # constant+id-like exclusion and silently ran ZERO tests on this
+    # dataset even though a real (region, daily_sales) pair exists to
+    # test. This pins the fix: at least one test must actually run.
+    code = "```python\nprint('INSIGHT: pytest coverage check')\n```"
+
+    with patch("app.agent.llm_client.Groq") as mock_llm_groq, \
+         patch("app.agent.planner.Groq") as mock_planner_groq:
+        mock_resp = MagicMock()
+        mock_resp.choices[0].message.content = code
+        mock_llm_groq.return_value.chat.completions.create.return_value = mock_resp
+        mock_planner_groq.return_value.chat.completions.create.return_value = _mock_plan_response()
+
+        result = analyze_csv_file(TIMESERIES_CSV)
+
+    assert result["statistical_tests"]["total_tests_run"] > 0
 
 
 def test_analyze_csv_file_missing_file_returns_clean_error():

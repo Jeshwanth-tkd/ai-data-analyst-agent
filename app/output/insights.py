@@ -209,10 +209,26 @@ def analyze_csv_file(csv_path: str) -> dict:
         # Phase 18: deterministic charts, independent of the LLM loop
         # below -- computed here so they exist even if the LLM run fails.
         auto_eda_charts = generate_auto_eda_charts(df)
-        # Phase 20/21: two more deterministic reports, same junk_columns
-        # exclusion as the EDA summary above.
+        # Phase 20: anomaly detection keeps the full junk_columns
+        # exclusion (constant + id-like) -- a deliberate Phase 20
+        # decision: an ID-shaped column would otherwise pollute
+        # Isolation Forest's feature space as a meaningless dimension.
         anomalies = detect_anomalies(df, exclude_columns=junk_columns)
-        statistical_tests = run_hypothesis_tests(df, exclude_columns=junk_columns)
+        # Phase 21/27: statistical_tests deliberately does NOT reuse the
+        # full junk_columns exclusion -- caught by testing (same root
+        # cause as the Phase 25 forecasting fix): a genuinely meaningful
+        # continuous numeric column (e.g. a revenue/price/rating metric)
+        # is routinely >95% unique, which is exactly what the id-like
+        # heuristic flags, so excluding it silently drops real,
+        # legitimate tests. This is safe on the CATEGORICAL side too --
+        # a column can't simultaneously be >95% unique (id-like) AND
+        # have only 2-6 distinct values (what run_hypothesis_tests()
+        # requires to treat it as a grouping column) for any dataset
+        # with more than a handful of rows, so id-like columns were
+        # never actually usable as the categorical side to begin with.
+        # Only genuinely constant (zero-variance) columns are excluded.
+        stats_exclude_columns = set(quality_report["structural_flags"]["constant_columns"])
+        statistical_tests = run_hypothesis_tests(df, exclude_columns=stats_exclude_columns)
         # Phase 24: deterministic cleaning suggestions + a conservative
         # auto-applied subset (missing-value fills, duplicate removal,
         # category standardization -- never column drops, see that

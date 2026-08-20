@@ -57,9 +57,18 @@ analysis on a 200-row dataset in **6.5 seconds**, versus **3.7 minutes**
 doing the same fixed checklist of analysis by hand — a **97% reduction** in
 my own analysis time on that dataset (single trial, full methodology and
 honest caveats in `tests/benchmark_results.md` and the Phase 9 log below).
-That benchmark predates the deterministic reports, cleaning agent,
-forecasting, and chat/SQL features added in later phases — it measures the
-original core agent loop only, not the full current feature set.
+That figure measures the **original core agent loop only** (Phase 4) — the
+part that needs an LLM call.
+
+Separately, the deterministic reports added in Phases 12-26 (data quality,
+automatic EDA, anomaly detection, statistical testing, the cleaning agent,
+forecasting, and HTML report generation) need **zero LLM/network calls**,
+so they're benchmarked on their own, on a different 200-row dataset
+(`movie_ratings.csv`) than the figure above: **all six reports plus the
+final HTML report generation complete in 0.85 seconds.** Full numbers,
+what did/didn't run on that dataset and why, and a real bug this
+benchmark caught while being built, are in
+`tests/benchmark_results.md`.
 
 ## Why this project
 
@@ -855,6 +864,21 @@ one growing file.
   Streamlit boot check.
 
 ### Phase 27 — UI/UX Polish ✅
+- **A second real bug, caught while building a fresh benchmark for the
+  deterministic reports:** `statistical_tests` was reusing the same
+  "exclude constant + id-like columns" filter as automatic EDA and
+  anomaly detection — but a genuinely meaningful continuous numeric
+  column (a price/rating/revenue-style metric) is routinely >95%
+  unique, exactly what the id-like heuristic flags, so it was silently
+  excluded from testing. Same root cause as the Phase 25 forecasting
+  fix, caught the same way (by actually running the pipeline against
+  real data rather than trusting the existing exclusion logic was
+  still correct once reused in a new place). Fixed at the call site in
+  `app/output/insights.py` to only exclude constant columns from
+  `statistical_tests`'s numeric side (anomaly detection's own exclusion
+  is unchanged — that one's a deliberate, differently-justified Phase 20
+  decision, not the same bug), pinned with a regression test in
+  `tests/test_insights.py`. Full details in `tests/benchmark_results.md`.
 - **A real bug caught while shipping this batch, fixed before it went
   further:** the deploy broke with an `ImportError` on
   `load_data_file` after the Phase 23-25 push — `git status` showed

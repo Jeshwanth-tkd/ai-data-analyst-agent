@@ -41,3 +41,58 @@ personally measured with `manual_eda_timer.py`, following
   dataset." This is accurate to what was actually measured; avoid
   phrasing that implies this was tested across many datasets/analysts,
   since it wasn't.
+
+## Phase 27 addition: deterministic reports (Phases 12-26), timed separately
+
+The table above measures the **original Phase 4 agent loop only** (ingest →
+LLM writes code → execute → self-correct). Everything added in Phases
+12-26 — data quality, automatic EDA, anomaly detection, statistical
+testing, the cleaning agent, forecasting, and HTML report generation —
+runs with **zero LLM/network calls**, so it's benchmarked separately here
+via `python tests/benchmark_deterministic_reports.py`, on a different
+dataset (`movie_ratings.csv`, 200 rows) than the table above, so this is a
+genuinely separate measurement rather than a relabeled version of the same
+number.
+
+| Metric | Result |
+|---|---|
+| Total time (all 6 deterministic reports + HTML report generation) | **0.85s** |
+| Data quality score | 100/100 |
+| Automatic EDA charts generated | 6 |
+| Anomaly detection | ran (Isolation Forest + z-score) |
+| Statistical tests run | 0 |
+| Cleaning suggestions generated | 5 |
+| Forecast | not run (no date-like column in this dataset) |
+
+**Honest notes on this measurement:**
+- This is a single run on one machine (this project's cloud dev
+  sandbox), not averaged across multiple runs — sub-second timings like
+  this can vary run to run more, proportionally, than the 6.5s Phase 9
+  number did.
+- **Statistical tests ran 0 times on this dataset, and that's expected,
+  not a bug:** `movie_ratings.csv`'s only categorical column (`genre`)
+  has 7 distinct values, one more than Phase 21's 2-6-category cap (see
+  that module's docstring for why the cap exists — a 30-category column
+  tested against a numeric column produces a result nobody can act on).
+  This is included rather than swapped for a more flattering dataset,
+  because a benchmark that only ever shows the best case isn't an honest
+  one.
+- **Forecasting didn't run on this dataset** because it has no date-like
+  column at all — expected, not a failure (see Phase 25's entry: most
+  datasets in this project aren't time series).
+- This number does NOT include the LLM code-generation/execution loop
+  (Phase 3/4) or the planner (Phase 17) — both require a real
+  `GROQ_API_KEY`, which isn't available in every environment this
+  benchmark might be re-run in. It measures exactly the deterministic
+  portion of `analyze_csv_file()` that runs with no network access at all.
+- **A real bug this benchmark caught while being built:** the first
+  version of this measurement showed 0 statistical tests running on a
+  *different* sample dataset for the wrong reason — `statistical_tests`
+  was reusing the same "exclude id-like columns" filter as the EDA
+  summary and anomaly detection, which silently dropped a legitimate
+  numeric column (a continuous metric that's >95% unique, exactly what
+  the id-like heuristic flags — the same root cause as a Phase 25
+  forecasting bug found earlier). Fixed at the call site in
+  `app/output/insights.py` (`statistical_tests.py` itself needed no
+  change) to only exclude genuinely constant columns from the numeric
+  side, pinned with a regression test in `tests/test_insights.py`.
