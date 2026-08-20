@@ -542,6 +542,84 @@ itself isn't built until Phase 4.
   (mocked Groq) confirming a second turn's prompt actually contains the
   first turn's Q&A and that chart files don't bleed between turns.
 
+### Phase 20 — Anomaly Detection ✅
+- **What it adds beyond Phase 12's outliers:** Phase 12 flags outliers
+  one column at a time (IQR fence). This phase adds two more lenses: a
+  **z-score** check per column (a different, more "classical statistics"
+  definition than IQR — the two don't always agree), and, more
+  importantly, **row-level multivariate anomaly detection** via
+  scikit-learn's `IsolationForest` — a row that's unremarkable in every
+  individual column but an unusual *combination* (e.g. very few years of
+  experience paired with a very senior salary) gets caught, which no
+  per-column check can do.
+- **A real bug caught by testing, not assumed away:** `contamination=
+  "auto"` looked like the safer, more honest choice (let the algorithm
+  decide, don't assert an arbitrary threshold) — it isn't. It replays a
+  fixed legacy threshold from the original 2008 Isolation Forest paper
+  rather than calibrating to the data, and on real sample data here it
+  flagged 65-69% of rows as "anomalous," which is obviously wrong. Fixed
+  by passing an explicit `contamination=0.05` (a conventional prior, not
+  a measurement) and pinned with a regression test.
+- **ID-like columns are excluded** from the Isolation Forest input for
+  the same reason they're excluded elsewhere — an identifier column is a
+  dimension of pure noise that measurably pollutes the anomaly scores
+  for every real feature it's mixed in with (also confirmed via test).
+- **Verified before shipping:** 7 unit tests, including the contamination
+  regression test, the ID-exclusion test, and edge cases (too few rows,
+  single numeric column, empty DataFrame) — plus the full UI
+  field-access replay against three real datasets.
+
+### Phase 21 — Statistical Analysis / Hypothesis Testing Engine ✅
+- **The question this answers:** Phase 16's EDA summary reports
+  correlations and category breakdowns, but never says whether a
+  difference is *real* or just noise. This phase adds actual hypothesis
+  tests: a **two-sample t-test** for a categorical column with exactly 2
+  groups, or a **one-way ANOVA** for 3-6 groups, run automatically
+  against every eligible (categorical, numeric) column pair.
+- **Honest about multiple comparisons:** testing many pairs and only
+  reporting "significant" ones (p < 0.05) without correction is a known
+  statistics trap — run enough tests and ~5% look significant by chance
+  alone. No formal correction (e.g. Bonferroni) is applied, but the
+  report always states how many total tests were run alongside the
+  significant ones, specifically so that context isn't hidden.
+- **Verified before shipping:** 7 unit tests, including a synthetic
+  dataset with a genuine, known difference (correctly flagged
+  significant) and one with no real difference at all (correctly NOT
+  flagged) — the tests prove the statistics work, not just that the code
+  runs without crashing.
+
+### Phase 22 — SQL Analyst ✅
+- **A deliberately different "front door"** onto the same dataset,
+  alongside the pandas-code agent (Phase 4) and the NL chat agent (Phase
+  19) — some questions are just more natural in SQL, and SQL gives a
+  fundamentally different, arguably *stronger* safety model than
+  sandboxing arbitrary Python.
+- **Two independent safety layers, not one:** `app/sql/sql_scanner.py`
+  is a Phase-13-style keyword/statement-shape blocklist (single SELECT
+  or WITH/CTE only, no DROP/DELETE/UPDATE/INSERT/ALTER/PRAGMA/etc.) —
+  but the real guarantee is that every query then runs through a SQLite
+  connection opened in **genuine read-only URI mode**
+  (`file:...?mode=ro`). Even a query that somehow slipped past the
+  scanner physically cannot mutate the database, because the OS-level
+  connection doesn't have write permission — proven directly in tests by
+  handing an `UPDATE` straight to the read-only connection (bypassing
+  the scanner entirely) and confirming SQLite itself rejects it.
+- **Same generate → check → run → retry shape** as the Python agent
+  loop, implemented separately (not reusing `code_executor.py`, which is
+  built around subprocess execution that doesn't apply to SQL) — a scan
+  failure or a real SQL error both feed back into another LLM call, up
+  to 3 retries.
+- **Shown in the UI** as its own "SQL Analyst" section — the generated
+  SQL is displayed alongside the result table, not hidden, since seeing
+  the actual query is part of the point.
+- **Verified before shipping:** unit tests for the scanner (including a
+  false-positive check — a column named `dropoff_location` must NOT be
+  blocked just because "drop" is a substring), unit tests for the full
+  analyst loop (happy path, scanner-block-then-retry, SQL-error-then-
+  retry, exhausts-retries-and-gives-up), and — critically — a direct test
+  proving the read-only connection rejects a write with zero scanner
+  involvement at all.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)
@@ -552,6 +630,8 @@ itself isn't built until Phase 4.
 - **Hosting**: [Streamlit Community Cloud](https://streamlit.io/cloud) (free)
 - **Testing / CI**: pytest, GitHub Actions (Phase 15)
 - **Structured outputs**: Pydantic (Phase 17's `AnalysisPlan`)
+- **ML / stats**: scikit-learn (Phase 20's `IsolationForest`), SciPy (Phase 21's t-test/ANOVA)
+- **SQL**: SQLite (stdlib) with a read-only connection (Phase 22)
 
 ## Running locally
 

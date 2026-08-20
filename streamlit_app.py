@@ -32,16 +32,30 @@ app.agent.chat_agent.answer_data_question(). The uploaded file's raw
 bytes (not the temp path, which gets deleted right after the main
 analysis) are kept in session_state so each chat question can rebuild
 its own temp CSV file on demand.
+
+Phase 20/21 additions: renders the Phase 20 anomaly report (z-score
+outliers + Isolation Forest row-level anomalies) and the Phase 21
+hypothesis-test results, both attached to analyze_csv_file()'s result
+dict, same "render unconditionally, independent of success/failure"
+pattern as Data Health.
+
+Phase 22 addition: a separate "SQL Analyst" section, reusing the same
+retained uploaded_bytes as the chat section, backed by
+app.sql.sql_analyst.answer_sql_question() -- a distinct alternate way to
+query the same dataset, with its own read-only-database safety model
+(see that module's docstring) rather than reusing the pandas-code path.
 """
 
 import os
 import tempfile
 
+import pandas as pd
 import streamlit as st
 
 from app.agent.chat_agent import answer_data_question
-from app.ingestion.csv_profiler import profile_csv
+from app.ingestion.csv_profiler import load_csv, profile_csv
 from app.output.insights import analyze_csv_file
+from app.sql.sql_analyst import answer_sql_question
 
 st.set_page_config(page_title="AI Data Analyst Agent", page_icon="📊")
 
@@ -156,6 +170,46 @@ if "result" in st.session_state:
             for chart_path in auto_charts:
                 st.image(chart_path)
 
+    # Phase 20: anomaly detection -- per-column z-score outliers and
+    # row-level multivariate anomalies (Isolation Forest).
+    anomalies = result.get("anomalies")
+    if anomalies:
+        iso = anomalies.get("isolation_forest", {})
+        z_outliers = anomalies.get("z_score_outliers", {})
+        if iso.get("ran") or z_outliers:
+            with st.expander("Anomaly Detection"):
+                if iso.get("ran"):
+                    st.write(
+                        f"**Row-level anomalies (Isolation Forest):** "
+                        f"{iso['anomalous_row_count']} of {iso['rows_checked']} rows "
+                        f"flagged ({iso['anomalous_row_pct']}%)"
+                    )
+                    if iso["top_anomalous_rows"]:
+                        st.write("Most anomalous rows:")
+                        st.table(iso["top_anomalous_rows"])
+                elif iso.get("reason"):
+                    st.caption(f"Row-level anomaly detection skipped: {iso['reason']}")
+
+                if z_outliers:
+                    st.write("**Per-column z-score outliers:**")
+                    for col, info in z_outliers.items():
+                        st.write(f"- {col}: {info['outlier_count']} values ({info['outlier_pct']}%) more than 3 standard deviations from the mean")
+
+    # Phase 21: automatic hypothesis tests between categorical and
+    # numeric columns.
+    stats_report = result.get("statistical_tests")
+    if stats_report and stats_report["total_tests_run"] > 0:
+        with st.expander(f"Statistical Tests ({stats_report['significant_results_count']} of {stats_report['total_tests_run']} significant)"):
+            if stats_report["top_significant_results"]:
+                for r in stats_report["top_significant_results"]:
+                    st.write(
+                        f"**{r['categorical_column']} vs {r['numeric_column']}** "
+                        f"({r['test']}, p={r['p_value']}): group means {r['group_means']}"
+                    )
+            else:
+                st.write("No statistically significant relationships found.")
+            st.caption(stats_report["multiple_comparisons_note"])
+
     if result["success"]:
         st.success("Analysis complete!")
 
@@ -227,3 +281,35 @@ if "result" in st.session_state:
                     })
                 else:
                     st.error(f"Couldn't answer that: {chat_result['error']}")
+
+    # Phase 22: SQL analyst -- a separate, alternate way to query the
+    # same dataset. Kept as its own section (not merged into the chat
+    # above) since it's backed by a genuinely different execution +
+    # safety model (a read-only SQLite connection) rather than the
+    # pandas-code-writing agent loop, and showing the generated SQL is
+    # part of the point.
+    if "uploaded_bytes" in st.session_state:
+        st.subheader("SQL Analyst")
+        st.caption("Ask a question answered by generating and running a read-only SQL query.")
+
+        sql_question = st.text_input("e.g. \"What is the average price by category?\"", key="sql_question_input")
+        if st.button("Run SQL query") and sql_question:
+            with st.spinner("Writing and running SQL..."):
+                with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
+                    tmp.write(st.session_state["uploaded_bytes"])
+                    sql_tmp_path = tmp.name
+
+                try:
+                    sql_df = load_csv(sql_tmp_path)
+                    sql_result = answer_sql_question(sql_df, sql_question)
+                finally:
+                    os.remove(sql_tmp_path)
+
+            if sql_result["success"]:
+                st.code(sql_result["sql"], language="sql")
+                if sql_result["rows"]:
+                    st.dataframe(pd.DataFrame(sql_result["rows"], columns=sql_result["columns"]))
+                else:
+                    st.write("(query returned no rows)")
+            else:
+                st.error(f"Couldn't run that query: {sql_result['error']}")

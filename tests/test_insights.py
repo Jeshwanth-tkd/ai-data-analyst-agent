@@ -17,7 +17,7 @@ SAMPLE_CSV = "data/samples/sample_sales.csv"
 
 EXPECTED_KEYS = {
     "success", "insights", "charts", "error", "attempts",
-    "data_quality", "plan", "auto_eda_charts",
+    "data_quality", "plan", "auto_eda_charts", "anomalies", "statistical_tests",
 }
 
 
@@ -58,6 +58,8 @@ def test_analyze_csv_file_missing_file_returns_clean_error():
     assert result["data_quality"] is None
     assert result["plan"] is None
     assert result["auto_eda_charts"] == []
+    assert result["anomalies"] is None
+    assert result["statistical_tests"] is None
     assert "Could not read the CSV file" in result["error"]
     assert result["insights"] == []
     assert result["charts"] == []

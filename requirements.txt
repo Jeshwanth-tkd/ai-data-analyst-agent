@@ -8,3 +8,5 @@ python-multipart
 streamlit
 requests
 pydantic
+scikit-learn
+scipy

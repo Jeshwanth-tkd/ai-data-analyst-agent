@@ -35,6 +35,16 @@ and a missingness chart, always available regardless of whether the
 LLM's own run succeeds. Attached as "auto_eda_charts" (a list of file
 paths, possibly empty).
 
+Phase 20/21 additions: two more deterministic reports computed
+alongside quality_report/eda_summary -- Phase 20's detect_anomalies()
+(z-score outliers + Isolation Forest row-level anomalies) attached as
+"anomalies", and Phase 21's run_hypothesis_tests() (automatic t-test/
+ANOVA between categorical and numeric columns) attached as
+"statistical_tests". Neither is threaded into the LLM's prompt (unlike
+quality_report/eda_summary/plan) -- kept UI-only for now to avoid
+growing the prompt further without a demonstrated need for the LLM to
+react to them yet.
+
 This module doesn't talk to the LLM or run any code itself (aside from
 calling the planner) — it takes the raw result of Phase 4's execution
 loop and structures it into something a future API/frontend can
@@ -46,8 +56,10 @@ import glob
 import os
 
 from app.agent.planner import generate_analysis_plan
+from app.anomalies.anomaly_detection import detect_anomalies
 from app.eda.auto_charts import generate_auto_eda_charts
 from app.eda.auto_eda import compute_auto_eda
+from app.stats.statistical_tests import run_hypothesis_tests
 from app.executor.code_executor import run_with_self_correction
 from app.ingestion.csv_profiler import load_csv, profile_dataframe
 from app.quality.data_quality import assess_data_quality
@@ -165,6 +177,10 @@ def analyze_csv_file(csv_path: str) -> dict:
         # Phase 18: deterministic charts, independent of the LLM loop
         # below -- computed here so they exist even if the LLM run fails.
         auto_eda_charts = generate_auto_eda_charts(df)
+        # Phase 20/21: two more deterministic reports, same junk_columns
+        # exclusion as the EDA summary above.
+        anomalies = detect_anomalies(df, exclude_columns=junk_columns)
+        statistical_tests = run_hypothesis_tests(df, exclude_columns=junk_columns)
     except Exception as e:
         return {
             "success": False,
@@ -175,6 +191,8 @@ def analyze_csv_file(csv_path: str) -> dict:
             "data_quality": None,
             "plan": None,
             "auto_eda_charts": [],
+            "anomalies": None,
+            "statistical_tests": None,
         }
 
     # Phase 17: decide on a plan before writing any code. generate_analysis_plan()
@@ -199,13 +217,15 @@ def analyze_csv_file(csv_path: str) -> dict:
             "attempts": [],
         }
 
-    # Attach the quality report, plan, and auto-EDA charts regardless of
-    # whether the LLM/execution side succeeded or failed -- all three are
+    # Attach every deterministic report regardless of whether the
+    # LLM/execution side succeeded or failed -- all of them are
     # independent of the agent loop's outcome, and are still genuinely
     # useful to show a user even on a failed run.
     result["data_quality"] = quality_report
     result["plan"] = plan.model_dump() if plan is not None else None
     result["auto_eda_charts"] = auto_eda_charts
+    result["anomalies"] = anomalies
+    result["statistical_tests"] = statistical_tests
     return result
 
 
@@ -235,6 +255,19 @@ if __name__ == "__main__":
         print(f"Automatic EDA charts (no LLM): {len(result['auto_eda_charts'])}")
         for chart in result["auto_eda_charts"]:
             print(f"  - {chart}")
+        print()
+
+    anomalies = result.get("anomalies")
+    if anomalies and anomalies["isolation_forest"].get("ran"):
+        iso = anomalies["isolation_forest"]
+        print(f"Anomalies: {iso['anomalous_row_count']}/{iso['rows_checked']} rows ({iso['anomalous_row_pct']}%)")
+
+    stats_report = result.get("statistical_tests")
+    if stats_report and stats_report["significant_results_count"]:
+        print(f"Statistical tests: {stats_report['significant_results_count']} significant result(s) "
+              f"out of {stats_report['total_tests_run']} tested")
+        for r in stats_report["top_significant_results"]:
+            print(f"  - {r['categorical_column']} vs {r['numeric_column']}: p={r['p_value']}")
         print()
 
     if result["success"]:
