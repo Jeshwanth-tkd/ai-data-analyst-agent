@@ -304,6 +304,49 @@ itself isn't built until Phase 4.
   which is exactly what `os.environ.get("GROQ_API_KEY")` already expected.
   The app auto-redeploys on every push to `main`.
 
+### Phase 12 — Data Quality Engine ✅
+- **What it is:** a deterministic "health report" for the uploaded CSV,
+  computed by `app/quality/data_quality.py` — plain pandas math, zero LLM
+  calls. Reserving the LLM for genuinely ambiguous judgment calls ("what's
+  interesting in this data?") and using deterministic code for
+  non-ambiguous checks ("what % of this column is missing?") is a
+  deliberate cost/reliability choice, not just a style preference.
+- **Four sub-scores, unweighted-averaged into one overall score (0-100):**
+  - *Missing values* — % of all cells that are `NaN`.
+  - *Duplicates* — % of rows that are exact repeats of an earlier row.
+  - *Type consistency* — text columns that are secretly numbers/dates
+    stored as strings, detected by trying `pd.to_numeric`/`pd.to_datetime`
+    with `errors="coerce"` and measuring what fraction actually parses.
+  - *Outliers* — the classic IQR fence (`Q1 - 1.5*IQR` / `Q3 + 1.5*IQR`),
+    the same rule a box plot uses to decide which points to draw outside
+    the whiskers.
+- **Structural flags** (not scored, just surfaced): constant columns (only
+  one distinct value), ID-like columns (>95% unique — useless to group
+  by), high-cardinality columns (many distinct categories — would blow up
+  a bar chart), and inconsistent category spellings (`"HR"` vs `"hr"` vs
+  `" HR "` silently splitting one group into several).
+- **Wired in additively:** `analyze_csv_file()` gained one new result key,
+  `data_quality`, computed from the *same* in-memory DataFrame the profile
+  already uses (the CSV is now read once instead of twice). Every key that
+  existed before is unchanged, so nothing that already consumed the result
+  dict broke.
+- **Surfaced in the UI** as a "Data Health" section — an overall score with
+  a 🟢/🟡/🔴 badge, the four sub-scores as metrics, and an expandable
+  "Structural notes" panel for the flags — rendered unconditionally
+  (regardless of whether the LLM/execution side succeeded), because
+  knowing your data is messy is useful even on a failed analysis run.
+- **Fixed along the way:** a pandas deprecation warning
+  (`select_dtypes(include="object")` → `include=["object", "string"]`) —
+  left alone, it wouldn't have crashed, it would have silently stopped
+  matching newer string-dtype columns in a future pandas release, which is
+  worse than a crash because it fails quietly.
+- **Verified before shipping:** ran the module directly against clean and
+  intentionally-messy sample CSVs, an integration test with a mocked Groq
+  client confirming the new key appears on both the success and failure
+  paths, and a headless `streamlit run` boot check plus a scripted replay
+  of the UI's exact field-access logic against real quality reports — all
+  before touching git.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)

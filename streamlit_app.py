@@ -78,6 +78,45 @@ if uploaded_file is not None and st.button("Analyze"):
 if "result" in st.session_state:
     result = st.session_state["result"]
 
+    # Phase 12: the data quality report is attached to the result dict
+    # regardless of whether the LLM/execution side succeeded, so this
+    # renders unconditionally -- "here's what we know about your data"
+    # is useful even on a failed analysis run.
+    quality = result.get("data_quality")
+    if quality:
+        st.subheader("Data Health")
+
+        score = quality["overall_score"]
+        # A simple three-tier color signal (no extra charting library
+        # needed) so "good vs. needs attention" is legible at a glance.
+        badge = "🟢" if score >= 85 else "🟡" if score >= 60 else "🔴"
+        st.metric("Overall score", f"{badge} {score}/100")
+
+        sub_scores = quality["scores"]
+        cols = st.columns(4)
+        cols[0].metric("Missing values", f"{sub_scores['missing_values']}/100")
+        cols[1].metric("Duplicates", f"{sub_scores['duplicates']}/100")
+        cols[2].metric("Type consistency", f"{sub_scores['type_consistency']}/100")
+        cols[3].metric("Outliers", f"{sub_scores['outliers']}/100")
+
+        flags = quality["structural_flags"]
+        flag_notes = []
+        if flags["constant_columns"]:
+            flag_notes.append(f"Constant columns (only one distinct value): {', '.join(flags['constant_columns'])}")
+        if flags["id_like_columns"]:
+            flag_notes.append(f"Identifier-like columns (almost all unique values): {', '.join(flags['id_like_columns'])}")
+        if flags["high_cardinality_columns"]:
+            flag_notes.append(f"High-cardinality columns (many distinct categories): {', '.join(flags['high_cardinality_columns'])}")
+        if flags["inconsistent_categories"]:
+            flag_notes.append(
+                f"Possible inconsistent category spellings in: {', '.join(flags['inconsistent_categories'].keys())}"
+            )
+
+        if flag_notes:
+            with st.expander("Structural notes"):
+                for note in flag_notes:
+                    st.write(f"- {note}")
+
     if result["success"]:
         st.success("Analysis complete!")
 
