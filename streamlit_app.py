@@ -68,6 +68,13 @@ Phase 26 addition: a "Download full report (HTML)" button, reading the
 single self-contained HTML file analyze_csv_file() already generated at
 result["report_path"] (app.report.report_generator) -- bundles every
 section above into one portable, offline-viewable file.
+
+Phase 27 addition: a UI/UX polish pass -- global CSS (a nicer font,
+refined color accents, styled buttons/expanders/metrics), a consistent
+icon per section, and app.ui.chart_carousel.render_chart_carousel()
+replacing every plain vertical stack of st.image() calls with a
+left/right-navigable, click-to-zoom carousel (Charts, Automatic EDA,
+Forecast, and each chat reply's chart).
 """
 
 import os
@@ -80,8 +87,59 @@ from app.agent.chat_agent import answer_data_question
 from app.ingestion.csv_profiler import load_data_file, profile_dataframe
 from app.output.insights import analyze_csv_file
 from app.sql.sql_analyst import answer_sql_question
+from app.ui.chart_carousel import render_chart_carousel
 
-st.set_page_config(page_title="AI Data Analyst Agent", page_icon="📊")
+st.set_page_config(page_title="AI Data Analyst Agent", page_icon="📊", layout="centered")
+
+# Phase 27: a single global stylesheet -- a cleaner font (Inter, with a
+# system-font fallback stack so the app still looks fine offline or if
+# the Google Fonts request is blocked), refined button/expander/metric
+# styling, and a bit more breathing room. Kept as one small, inline
+# st.markdown() block rather than a separate CSS file or a UI-theming
+# package -- Streamlit has no built-in way to load an external
+# stylesheet file, and this is little enough CSS that a dependency
+# would be overkill for it.
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+    h1 { font-weight: 700; letter-spacing: -0.02em; }
+    h2, h3 { font-weight: 600; }
+
+    /* Buttons: rounded, subtle shadow, a single accent color used
+       consistently everywhere a primary action appears. */
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 8px;
+        border: 1px solid #d7dbe0;
+        font-weight: 500;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        border-color: #4C8BF5;
+        box-shadow: 0 0 0 1px #4C8BF5;
+        color: #4C8BF5;
+    }
+
+    /* Expanders: card-like, so each report section reads as a distinct
+       block instead of blending into the page. */
+    div[data-testid="stExpander"] {
+        border: 1px solid #e3e6ea;
+        border-radius: 10px;
+        background: #fafbfc;
+    }
+
+    /* Metrics (Data Health scores): tighter, bolder numbers. */
+    div[data-testid="stMetricValue"] { font-weight: 700; }
+
+    /* Chat bubbles: a touch more rounding + spacing for readability. */
+    div[data-testid="stChatMessage"] { border-radius: 12px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.title("📊 AI-Powered Data Analyst Agent")
 st.write(
@@ -92,14 +150,14 @@ st.write(
 
 # Phase 23: accept any format load_data_file() supports, not just CSV.
 uploaded_file = st.file_uploader(
-    "Choose a data file", type=["csv", "xlsx", "xls", "json", "parquet"]
+    "📁 Choose a data file", type=["csv", "xlsx", "xls", "json", "parquet"]
 )
 
 # st.button() only returns True on the exact rerun where it was clicked.
 # Streamlit reruns this whole script on every interaction, so without
 # this button as a deliberate trigger, we'd risk re-calling the LLM on
 # every unrelated widget interaction -- wasteful and slow.
-if uploaded_file is not None and st.button("Analyze"):
+if uploaded_file is not None and st.button("🚀 Analyze"):
     with st.spinner(
         "Agent is thinking -- profiling your data, writing analysis code, "
         "running it, and self-correcting if it fails. This can take "
@@ -153,7 +211,7 @@ if "result" in st.session_state:
     # is useful even on a failed analysis run.
     quality = result.get("data_quality")
     if quality:
-        st.subheader("Data Health")
+        st.subheader("🩺 Data Health")
 
         score = quality["overall_score"]
         # A simple three-tier color signal (no extra charting library
@@ -192,7 +250,7 @@ if "result" in st.session_state:
     # section just doesn't render rather than showing an error.
     plan = result.get("plan")
     if plan:
-        st.subheader("Agent's Plan")
+        st.subheader("🧭 Agent's Plan")
         st.write(f"**Goal:** {plan['goal']}")
         for i, step in enumerate(plan["steps"], start=1):
             st.write(f"{i}. {step}")
@@ -202,9 +260,8 @@ if "result" in st.session_state:
     # Health above.
     auto_charts = result.get("auto_eda_charts")
     if auto_charts:
-        with st.expander(f"Automatic EDA ({len(auto_charts)} charts, no LLM involved)"):
-            for chart_path in auto_charts:
-                st.image(chart_path)
+        with st.expander(f"📊 Automatic EDA ({len(auto_charts)} charts, no LLM involved)"):
+            render_chart_carousel(auto_charts)
 
     # Phase 20: anomaly detection -- per-column z-score outliers and
     # row-level multivariate anomalies (Isolation Forest).
@@ -213,7 +270,7 @@ if "result" in st.session_state:
         iso = anomalies.get("isolation_forest", {})
         z_outliers = anomalies.get("z_score_outliers", {})
         if iso.get("ran") or z_outliers:
-            with st.expander("Anomaly Detection"):
+            with st.expander("🚨 Anomaly Detection"):
                 if iso.get("ran"):
                     st.write(
                         f"**Row-level anomalies (Isolation Forest):** "
@@ -237,7 +294,7 @@ if "result" in st.session_state:
     # of success/failure below, same reasoning as Data Health.
     cleaning = result.get("cleaning")
     if cleaning and cleaning["suggestions"]:
-        with st.expander(f"Cleaning Suggestions ({len(cleaning['suggestions'])})"):
+        with st.expander(f"🧹 Cleaning Suggestions ({len(cleaning['suggestions'])})"):
             for action in cleaning["suggestions"]:
                 if action["auto_applied"]:
                     st.write(f"✅ **Auto-applied:** {action['description']}")
@@ -252,7 +309,7 @@ if "result" in st.session_state:
             if cleaning["cleaned_csv_path"]:
                 with open(cleaning["cleaned_csv_path"], "rb") as f:
                     st.download_button(
-                        "Download cleaned CSV",
+                        "⬇️ Download cleaned CSV",
                         data=f.read(),
                         file_name="cleaned_data.csv",
                         mime="text/csv",
@@ -264,7 +321,7 @@ if "result" in st.session_state:
     # error worth surfacing as one).
     forecast = result.get("forecast")
     if forecast and forecast.get("ran"):
-        with st.expander(f"Forecast: {forecast['value_column']} (next {forecast['forecast_periods']} periods)"):
+        with st.expander(f"📈 Forecast: {forecast['value_column']} (next {forecast['forecast_periods']} periods)"):
             st.caption(
                 f"Based on {forecast['historical_points']} historical points in "
                 f"'{forecast['date_column']}'. Uses a simple trend model (Holt's linear "
@@ -272,14 +329,14 @@ if "result" in st.session_state:
                 f"the last observed value) is shown alongside it so you can judge whether "
                 f"the trend model is actually adding anything."
             )
-            st.image(forecast["chart_path"])
+            render_chart_carousel([forecast["chart_path"]])
             st.table(forecast["forecast"])
 
     # Phase 21: automatic hypothesis tests between categorical and
     # numeric columns.
     stats_report = result.get("statistical_tests")
     if stats_report and stats_report["total_tests_run"] > 0:
-        with st.expander(f"Statistical Tests ({stats_report['significant_results_count']} of {stats_report['total_tests_run']} significant)"):
+        with st.expander(f"🧪 Statistical Tests ({stats_report['significant_results_count']} of {stats_report['total_tests_run']} significant)"):
             if stats_report["top_significant_results"]:
                 for r in stats_report["top_significant_results"]:
                     st.write(
@@ -293,19 +350,18 @@ if "result" in st.session_state:
     if result["success"]:
         st.success("Analysis complete!")
 
-        st.subheader("Insights")
+        st.subheader("💡 Insights")
         for insight in result["insights"]:
             st.write(f"- {insight}")
 
         if result["charts"]:
-            st.subheader("Charts")
-            for chart_path in result["charts"]:
-                # No backend, no URL -- analyze_csv_file() already
-                # returns local file paths (e.g. outputs/chart_1.png),
-                # and st.image() happily reads a chart straight off
-                # disk. This is actually simpler than the old
-                # BACKEND_URL + /charts/... URL version.
-                st.image(chart_path)
+            st.subheader("🖼️ Charts")
+            # No backend, no URL -- analyze_csv_file() already returns
+            # local file paths (e.g. outputs/chart_1.png), and the
+            # carousel reads them straight off disk. Phase 27: a
+            # left/right-navigable, click-to-zoom carousel instead of a
+            # plain vertical stack of images.
+            render_chart_carousel(result["charts"])
     else:
         st.error(f"Analysis failed: {result['error']}")
 
@@ -326,7 +382,7 @@ if "result" in st.session_state:
     # CSV file for each question -- run_code()'s wrapper script reads the
     # file from a real path, it doesn't accept an in-memory DataFrame).
     if "uploaded_bytes" in st.session_state:
-        st.subheader("Ask a follow-up question")
+        st.subheader("💬 Ask a follow-up question")
 
         for turn in st.session_state.get("chat_history", []):
             with st.chat_message("user"):
@@ -334,7 +390,7 @@ if "result" in st.session_state:
             with st.chat_message("assistant"):
                 st.write(turn["answer"])
                 if turn.get("chart"):
-                    st.image(turn["chart"])
+                    render_chart_carousel([turn["chart"]], height=340)
 
         question = st.chat_input("e.g. \"Why did sales fall in March?\" or \"Plot that\"")
         if question:
@@ -369,7 +425,7 @@ if "result" in st.session_state:
                 if chat_result["success"]:
                     st.write(chat_result["answer"])
                     if chat_result["chart"]:
-                        st.image(chat_result["chart"])
+                        render_chart_carousel([chat_result["chart"]], height=340)
                     st.session_state["chat_history"].append({
                         "question": question,
                         "answer": chat_result["answer"],
@@ -385,7 +441,7 @@ if "result" in st.session_state:
     # pandas-code-writing agent loop, and showing the generated SQL is
     # part of the point.
     if "uploaded_bytes" in st.session_state:
-        st.subheader("SQL Analyst")
+        st.subheader("🗄️ SQL Analyst")
         st.caption("Ask a question answered by generating and running a read-only SQL query.")
 
         sql_question = st.text_input("e.g. \"What is the average price by category?\"", key="sql_question_input")

@@ -304,6 +304,31 @@ itself isn't built until Phase 4.
   which is exactly what `os.environ.get("GROQ_API_KEY")` already expected.
   The app auto-redeploys on every push to `main`.
 
+### Phase 11 — Resume/Portfolio Packaging ✅
+- **Backfilled entry, written retroactively:** this phase's actual work
+  (final README polish, the live demo link + screenshots, an honest
+  "what I'd improve" write-up) was done at the time, alongside Phase 10,
+  but the log entry itself got skipped when the original 11-phase plan
+  was extended into the larger phase list below — caught and filled in
+  here rather than left as a silent gap in the build history.
+- **Live demo link + screenshots**, both already at the top of this
+  README (added right after Phase 10's deployment): the deployed app
+  URL plus three screenshots (upload screen, insights/charts, chart
+  detail) so a reviewer sees the working product before reading a single
+  line of the build log.
+- **The honest "what I'd improve with more time" section** (bottom of
+  this README): written and kept up to date since this phase, covering
+  subprocess-vs-container sandboxing, untuned retry/timeout constants,
+  the single-process chart-serving assumption, the one-trial time-saved
+  number, no streaming progress, and a known column-type-detection edge
+  case — the deliberate goal being that an honest limitations list reads
+  as more credible to a reviewer than a project that claims to have none.
+- **The architecture write-up** — the `Architecture` section above and
+  each phase's own log entry together form the "explain what you built
+  and why" narrative this phase called for, rather than a single
+  separate essay; kept as a running log instead of one document so it
+  stays accurate as later phases (12 onward) actually change the system.
+
 ### Phase 12 — Data Quality Engine ✅
 - **What it is:** a deterministic "health report" for the uploaded CSV,
   computed by `app/quality/data_quality.py` — plain pandas math, zero LLM
@@ -772,6 +797,72 @@ itself isn't built until Phase 4.
   visually inspecting a real rendered report (via a headless-browser
   screenshot) against the daily-sales time-series sample, and a headless
   Streamlit boot check.
+
+### Phase 27 — UI/UX Polish ✅
+- **A real bug caught while shipping this batch, fixed before it went
+  further:** the deploy broke with an `ImportError` on
+  `load_data_file` after the Phase 23-25 push — `git status` showed
+  `app/ingestion/csv_profiler.py`, `app/executor/code_executor.py`, and
+  several new files/directories had never actually been committed,
+  even though later phases' commits (which touch `streamlit_app.py`,
+  which imports from those files) had gone through. Diagnosed from the
+  live Streamlit Cloud traceback plus `git status`, fixed with one
+  catch-up commit adding exactly the files git showed as modified/
+  untracked, confirmed live afterward.
+- **`app/ui/chart_carousel.py`**: a hand-written, dependency-free
+  carousel + click-to-zoom lightbox component (`streamlit.components.v1.html`),
+  replacing every plain vertical stack of `st.image()` calls (Charts,
+  Automatic EDA, Forecast, each chat reply's chart) — left/right arrow
+  navigation, dot indicators, a slide counter, keyboard arrow-key
+  support, and a full-size lightbox on click (dismissible via its close
+  button, clicking outside it, or Escape). Every chart is embedded as a
+  base64 `data:` URI directly in the component, the same embedding
+  approach `app/report/report_generator.py` already used — no separate
+  image-serving route needed.
+- **Why hand-written, not a pip-installed carousel/lightbox package:**
+  this project's own standing rule is free tools only, and a ~150-line
+  self-contained component has no external dependency, no
+  version-compatibility risk against whatever Streamlit version
+  Community Cloud runs, and is small enough to fully explain in an
+  interview — an actual advantage for a portfolio project, not just a
+  cost-saving shortcut.
+- **`components.html()` renders each call in its own `<iframe>`**, so
+  multiple carousels on the same page (Charts, Automatic EDA, Forecast)
+  never collide with each other's element IDs or JS state — verified by
+  rendering the raw component HTML in a headless browser and clicking
+  through navigation, zoom, and Escape-to-close before wiring it into
+  the app.
+- **A global stylesheet** (one `st.markdown(..., unsafe_allow_html=True)`
+  block): the Inter font (with a system-font fallback stack so the app
+  still looks reasonable if the Google Fonts request is blocked),
+  rounded buttons with a consistent hover accent color, card-style
+  expanders so each report section reads as a distinct block, and
+  bolder metric numbers for the Data Health scores.
+- **A consistent icon per section** (🩺 Data Health, 🧭 Agent's Plan, 📊
+  Automatic EDA, 🚨 Anomaly Detection, 🧹 Cleaning Suggestions, 📈
+  Forecast, 🧪 Statistical Tests, 💡 Insights, 🖼️ Charts, 💬 Chat, 🗄️ SQL
+  Analyst) so the page is scannable at a glance instead of every section
+  header looking the same.
+- **A real, XSS-relevant edge case found and fixed by the carousel's own
+  tests**, not just assumed safe: `json.dumps()` alone doesn't escape
+  the sequence `</script>`, so a filename containing it could
+  prematurely close the component's embedded `<script>` tag. Fixed with
+  a small, targeted `<\/` escape and pinned with a dedicated test — even
+  though a real filename can never contain `/` on a POSIX filesystem
+  (making this untriggerable via an actual uploaded file today), the
+  function responsible for the embedding is tested as safe on its own
+  terms rather than relying on that filesystem constraint holding
+  forever.
+- **Verified before shipping:** unit tests for the carousel's pure
+  HTML-building function (empty/missing-file handling, base64
+  embedding with no raw file paths leaking out, single- vs.
+  multi-chart navigation-control visibility, HTML-escaping of
+  filenames, the `</script>` edge case above), a full pytest suite run,
+  a headless-browser screenshot pass exercising real navigation/zoom/
+  Escape-to-close interactions against the raw component HTML, a
+  headless Streamlit boot check, and a browser screenshot of the live
+  running app confirming the new font/styling/icons and the upload
+  flow all render correctly end to end.
 
 ## Tech stack
 
