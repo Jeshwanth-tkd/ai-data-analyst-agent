@@ -45,6 +45,31 @@ quality_report/eda_summary/plan) -- kept UI-only for now to avoid
 growing the prompt further without a demonstrated need for the LLM to
 react to them yet.
 
+Phase 24 addition: a fifth deterministic report -- Phase 24's
+suggest_cleaning_actions()/apply_cleaning_actions() -- computed the same
+way as the others. Attached as "cleaning": {"suggestions": [...],
+"log": [...], "cleaned_csv_path": str|None}. Unlike the reports above,
+this one also writes a file (the cleaned CSV, if any actions were
+actually applied) into OUTPUTS_DIR, since a cleaned dataset is something
+a user would want to download, not just read about.
+
+Phase 25 addition: a sixth deterministic report -- Phase 25's
+forecast_time_series() -- attempts to auto-detect a date-like column and
+a numeric column and forecast the next several periods forward (Holt's
+linear trend method, statsmodels). Attached as "forecast":
+{"ran": bool, ...} -- "ran" is False (with a "reason") for any dataset
+without a usable date+numeric pair or without enough historical points,
+which is expected and NOT an error -- most datasets in this project
+(e.g. sample_sales.csv) aren't time series at all.
+
+Phase 26 addition: a final "report_path" key -- app.report.report_generator's
+save_html_report() bundles the entire result dict (insights, every
+chart, data quality, plan, EDA, anomalies, stats, cleaning, forecast)
+into one self-contained downloadable HTML file, written to
+outputs/report.html. Generated last, since it only reads what's already
+been computed above; wrapped in its own try/except so a report-writing
+failure can never take down an otherwise-successful analysis.
+
 This module doesn't talk to the LLM or run any code itself (aside from
 calling the planner) — it takes the raw result of Phase 4's execution
 loop and structures it into something a future API/frontend can
@@ -57,11 +82,14 @@ import os
 
 from app.agent.planner import generate_analysis_plan
 from app.anomalies.anomaly_detection import detect_anomalies
+from app.cleaning.data_cleaning import apply_cleaning_actions, suggest_cleaning_actions
 from app.eda.auto_charts import generate_auto_eda_charts
 from app.eda.auto_eda import compute_auto_eda
+from app.forecasting.forecasting import forecast_time_series
+from app.report.report_generator import save_html_report
 from app.stats.statistical_tests import run_hypothesis_tests
 from app.executor.code_executor import run_with_self_correction
-from app.ingestion.csv_profiler import load_csv, profile_dataframe
+from app.ingestion.csv_profiler import load_data_file, profile_dataframe
 from app.quality.data_quality import assess_data_quality
 
 OUTPUTS_DIR = "outputs"
@@ -164,7 +192,11 @@ def analyze_csv_file(csv_path: str) -> dict:
     quality report are describing the literal same snapshot of data.
     """
     try:
-        df = load_csv(csv_path)
+        # Phase 23: load_data_file() dispatches by extension (csv, xlsx,
+        # xls, json, parquet) instead of assuming CSV -- the csv_path
+        # parameter name is unchanged (see csv_profiler.py's Phase 23
+        # docstring note on why), but it may now hold any supported format.
+        df = load_data_file(csv_path)
         profile = profile_dataframe(df)
         quality_report = assess_data_quality(df)
         # Phase 16: don't waste EDA-summary space on columns already
@@ -181,18 +213,54 @@ def analyze_csv_file(csv_path: str) -> dict:
         # exclusion as the EDA summary above.
         anomalies = detect_anomalies(df, exclude_columns=junk_columns)
         statistical_tests = run_hypothesis_tests(df, exclude_columns=junk_columns)
+        # Phase 24: deterministic cleaning suggestions + a conservative
+        # auto-applied subset (missing-value fills, duplicate removal,
+        # category standardization -- never column drops, see that
+        # module's docstring). The cleaned data is written out as its
+        # own CSV (not embedded in this dict) so it can be offered as a
+        # download, the same pattern as chart file paths below.
+        cleaning_suggestions = suggest_cleaning_actions(df, quality_report)
+        cleaning_apply_result = apply_cleaning_actions(df, cleaning_suggestions)
+        cleaned_csv_path = None
+        if cleaning_apply_result["log"]:
+            os.makedirs(OUTPUTS_DIR, exist_ok=True)
+            cleaned_csv_path = os.path.join(OUTPUTS_DIR, "cleaned_data.csv")
+            cleaning_apply_result["cleaned_df"].to_csv(cleaned_csv_path, index=False)
+        cleaning = {
+            "suggestions": cleaning_suggestions,
+            "log": cleaning_apply_result["log"],
+            "cleaned_csv_path": cleaned_csv_path,
+        }
+        # Phase 25: forecast_time_series() never raises (see its own
+        # docstring). Deliberately NOT reusing junk_columns here (unlike
+        # eda_summary/anomalies/statistical_tests above) -- caught by
+        # testing against a real time-series sample: Phase 12's
+        # id-like-column heuristic (>95% unique values) is tuned for
+        # "is this safe to group/aggregate by", and a genuine continuous
+        # metric worth forecasting (revenue, temperature, price) is
+        # ROUTINELY >95% unique too -- excluding it would silently
+        # disable forecasting on exactly the columns most worth
+        # forecasting. Only constant columns (zero variance -- nothing
+        # to forecast, definitionally) are excluded from the numeric
+        # candidate pool; date-column detection was already independent
+        # of any exclusion (see forecasting.py's own docstring).
+        forecast_exclude_columns = set(quality_report["structural_flags"]["constant_columns"])
+        forecast = forecast_time_series(df, exclude_columns=forecast_exclude_columns)
     except Exception as e:
         return {
             "success": False,
             "insights": [],
             "charts": [],
-            "error": f"Could not read the CSV file: {e}",
+            "error": f"Could not read the data file: {e}",
             "attempts": [],
             "data_quality": None,
             "plan": None,
             "auto_eda_charts": [],
             "anomalies": None,
             "statistical_tests": None,
+            "cleaning": None,
+            "forecast": None,
+            "report_path": None,
         }
 
     # Phase 17: decide on a plan before writing any code. generate_analysis_plan()
@@ -226,6 +294,19 @@ def analyze_csv_file(csv_path: str) -> dict:
     result["auto_eda_charts"] = auto_eda_charts
     result["anomalies"] = anomalies
     result["statistical_tests"] = statistical_tests
+    result["cleaning"] = cleaning
+    result["forecast"] = forecast
+
+    # Phase 26: bundle everything above into one self-contained HTML
+    # report, generated LAST since it just reads what's already in
+    # `result` -- wrapped defensively like the planner call above, since
+    # a report-writing failure (e.g. a full disk) shouldn't be able to
+    # take down an otherwise-successful analysis.
+    try:
+        result["report_path"] = save_html_report(result, dataset_name=os.path.basename(csv_path))
+    except Exception:
+        result["report_path"] = None
+
     return result
 
 
@@ -269,6 +350,26 @@ if __name__ == "__main__":
         for r in stats_report["top_significant_results"]:
             print(f"  - {r['categorical_column']} vs {r['numeric_column']}: p={r['p_value']}")
         print()
+
+    cleaning = result.get("cleaning")
+    if cleaning and cleaning["suggestions"]:
+        print(f"Cleaning suggestions: {len(cleaning['suggestions'])}")
+        for a in cleaning["suggestions"]:
+            marker = "auto-applied" if a["auto_applied"] else "manual review"
+            print(f"  [{marker}] {a['description']}")
+        if cleaning["cleaned_csv_path"]:
+            print(f"Cleaned data saved to: {cleaning['cleaned_csv_path']}")
+        print()
+
+    forecast = result.get("forecast")
+    if forecast and forecast.get("ran"):
+        print(f"Forecast ({forecast['value_column']} over {forecast['date_column']}):")
+        for point in forecast["forecast"]:
+            print(f"  {point['date']}: predicted={point['predicted_value']}, naive_baseline={point['naive_baseline']}")
+        print(f"Forecast chart saved to: {forecast['chart_path']}\n")
+
+    if result.get("report_path"):
+        print(f"Full HTML report saved to: {result['report_path']}")
 
     if result["success"]:
         print(f"Insights found: {len(result['insights'])}")

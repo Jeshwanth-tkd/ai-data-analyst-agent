@@ -44,6 +44,30 @@ retained uploaded_bytes as the chat section, backed by
 app.sql.sql_analyst.answer_sql_question() -- a distinct alternate way to
 query the same dataset, with its own read-only-database safety model
 (see that module's docstring) rather than reusing the pandas-code path.
+
+Phase 23 addition: the file uploader now accepts Excel/JSON/Parquet
+alongside CSV (app.ingestion.csv_profiler.load_data_file() dispatches by
+extension). The original upload's extension is kept in session_state
+alongside its raw bytes, so the chat and SQL Analyst sections -- which
+each rebuild their own temp file from those bytes -- give the rebuilt
+file the same suffix as the original upload rather than assuming ".csv".
+
+Phase 24 addition: a "Cleaning Suggestions" section rendered from
+analyze_csv_file()'s new "cleaning" key -- shows every suggested action
+(auto-applied ones and manual-review-only ones distinguished visually),
+the plain-language log of what was actually changed, and a download
+button for the cleaned CSV when anything was auto-applied.
+
+Phase 25 addition: a "Forecast" section, shown only when
+analyze_csv_file()'s new "forecast" key actually ran (most datasets
+aren't time series, so a not-ran forecast is the common case and isn't
+surfaced as an error) -- the forecast chart plus a table of predicted
+values against a naive last-value baseline.
+
+Phase 26 addition: a "Download full report (HTML)" button, reading the
+single self-contained HTML file analyze_csv_file() already generated at
+result["report_path"] (app.report.report_generator) -- bundles every
+section above into one portable, offline-viewable file.
 """
 
 import os
@@ -53,7 +77,7 @@ import pandas as pd
 import streamlit as st
 
 from app.agent.chat_agent import answer_data_question
-from app.ingestion.csv_profiler import load_csv, profile_csv
+from app.ingestion.csv_profiler import load_data_file, profile_dataframe
 from app.output.insights import analyze_csv_file
 from app.sql.sql_analyst import answer_sql_question
 
@@ -61,11 +85,15 @@ st.set_page_config(page_title="AI Data Analyst Agent", page_icon="📊")
 
 st.title("📊 AI-Powered Data Analyst Agent")
 st.write(
-    "Upload a CSV and an AI agent will write, run, and self-correct its "
-    "own Python analysis code against it -- no manual EDA required."
+    "Upload a CSV, Excel, JSON, or Parquet file and an AI agent will "
+    "write, run, and self-correct its own Python analysis code against "
+    "it -- no manual EDA required."
 )
 
-uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
+# Phase 23: accept any format load_data_file() supports, not just CSV.
+uploaded_file = st.file_uploader(
+    "Choose a data file", type=["csv", "xlsx", "xls", "json", "parquet"]
+)
 
 # st.button() only returns True on the exact rerun where it was clicked.
 # Streamlit reruns this whole script on every interaction, so without
@@ -77,14 +105,19 @@ if uploaded_file is not None and st.button("Analyze"):
         "running it, and self-correcting if it fails. This can take "
         "10-30 seconds..."
     ):
-        # analyze_csv_file() needs a real file path on disk (profile_csv
-        # -> load_csv opens it with pandas), but Streamlit only gives us
-        # the uploaded bytes in memory. So we write those bytes out to a
-        # temp file first, point the agent at that path, and clean the
-        # temp file up afterwards -- the same handoff the FastAPI
-        # endpoint used to do with UploadFile, just without the HTTP hop.
+        # analyze_csv_file() needs a real file path on disk (it calls
+        # load_data_file() -> pandas), but Streamlit only gives us the
+        # uploaded bytes in memory. So we write those bytes out to a temp
+        # file first, point the agent at that path, and clean the temp
+        # file up afterwards -- the same handoff the FastAPI endpoint
+        # used to do with UploadFile, just without the HTTP hop.
+        # Phase 23: the temp file's suffix must match the ORIGINAL
+        # upload's extension (not always ".csv") so load_data_file()
+        # dispatches to the right parser -- an .xlsx's bytes written to a
+        # ".csv"-suffixed file would be handed to the CSV parser and fail.
+        file_extension = os.path.splitext(uploaded_file.name)[1].lower()
         with tempfile.NamedTemporaryFile(
-            mode="wb", suffix=".csv", delete=False
+            mode="wb", suffix=file_extension, delete=False
         ) as tmp:
             tmp.write(uploaded_file.getvalue())
             tmp_path = tmp.name
@@ -95,12 +128,15 @@ if uploaded_file is not None and st.button("Analyze"):
             # reruns (e.g. if the user interacts with something else on
             # the page) without needing to re-run the whole analysis.
             st.session_state["result"] = result
-            # Phase 19: keep the raw CSV bytes around (not the temp path
-            # itself, which we're about to delete) so the chat section
-            # below can write a fresh temp file per question. Starting a
-            # new analysis always resets the chat history -- old Q&A
-            # about a different dataset shouldn't linger.
+            # Phase 19: keep the raw bytes around (not the temp path
+            # itself, which we're about to delete) so the chat/SQL
+            # sections below can write a fresh temp file per question.
+            # Phase 23: the extension is kept alongside the bytes so
+            # those rebuilt temp files also get the right suffix.
+            # Starting a new analysis always resets the chat history --
+            # old Q&A about a different dataset shouldn't linger.
             st.session_state["uploaded_bytes"] = uploaded_file.getvalue()
+            st.session_state["uploaded_file_extension"] = file_extension
             st.session_state["chat_history"] = []
         finally:
             os.remove(tmp_path)
@@ -195,6 +231,50 @@ if "result" in st.session_state:
                     for col, info in z_outliers.items():
                         st.write(f"- {col}: {info['outlier_count']} values ({info['outlier_pct']}%) more than 3 standard deviations from the mean")
 
+    # Phase 24: data cleaning agent -- deterministic suggestions plus
+    # whatever conservative subset was auto-applied (never column drops,
+    # see app/cleaning/data_cleaning.py's docstring). Rendered regardless
+    # of success/failure below, same reasoning as Data Health.
+    cleaning = result.get("cleaning")
+    if cleaning and cleaning["suggestions"]:
+        with st.expander(f"Cleaning Suggestions ({len(cleaning['suggestions'])})"):
+            for action in cleaning["suggestions"]:
+                if action["auto_applied"]:
+                    st.write(f"✅ **Auto-applied:** {action['description']}")
+                else:
+                    st.write(f"💡 **Suggested (not applied):** {action['description']}")
+
+            if cleaning["log"]:
+                st.write("**What was actually changed:**")
+                for line in cleaning["log"]:
+                    st.write(f"- {line}")
+
+            if cleaning["cleaned_csv_path"]:
+                with open(cleaning["cleaned_csv_path"], "rb") as f:
+                    st.download_button(
+                        "Download cleaned CSV",
+                        data=f.read(),
+                        file_name="cleaned_data.csv",
+                        mime="text/csv",
+                    )
+
+    # Phase 25: forecasting -- only rendered when a usable date+numeric
+    # pair was actually found (most datasets in this project aren't time
+    # series at all, so "not ran" is the common, expected case, not an
+    # error worth surfacing as one).
+    forecast = result.get("forecast")
+    if forecast and forecast.get("ran"):
+        with st.expander(f"Forecast: {forecast['value_column']} (next {forecast['forecast_periods']} periods)"):
+            st.caption(
+                f"Based on {forecast['historical_points']} historical points in "
+                f"'{forecast['date_column']}'. Uses a simple trend model (Holt's linear "
+                f"trend) -- doesn't account for seasonality. A naive baseline (repeating "
+                f"the last observed value) is shown alongside it so you can judge whether "
+                f"the trend model is actually adding anything."
+            )
+            st.image(forecast["chart_path"])
+            st.table(forecast["forecast"])
+
     # Phase 21: automatic hypothesis tests between categorical and
     # numeric columns.
     stats_report = result.get("statistical_tests")
@@ -229,6 +309,18 @@ if "result" in st.session_state:
     else:
         st.error(f"Analysis failed: {result['error']}")
 
+    # Phase 26: one self-contained HTML report bundling everything above
+    # -- offered as a download regardless of success/failure, same
+    # "renders unconditionally" pattern as Data Health.
+    if result.get("report_path"):
+        with open(result["report_path"], "rb") as f:
+            st.download_button(
+                "📄 Download full report (HTML)",
+                data=f.read(),
+                file_name="analysis_report.html",
+                mime="text/html",
+            )
+
     # Phase 19: natural language data chat. Only shown once a dataset has
     # actually been analyzed (we need uploaded_bytes to rebuild a temp
     # CSV file for each question -- run_code()'s wrapper script reads the
@@ -251,15 +343,19 @@ if "result" in st.session_state:
 
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
-                    # Re-materialize the CSV from the bytes kept in
+                    # Re-materialize the file from the bytes kept in
                     # session_state -- the original temp file from the
-                    # main analysis run was already deleted.
-                    with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
+                    # main analysis run was already deleted. Phase 23:
+                    # reuse the original upload's extension so this
+                    # rebuilt temp file gets parsed the same way.
+                    chat_suffix = st.session_state.get("uploaded_file_extension", ".csv")
+                    with tempfile.NamedTemporaryFile(mode="wb", suffix=chat_suffix, delete=False) as tmp:
                         tmp.write(st.session_state["uploaded_bytes"])
                         chat_tmp_path = tmp.name
 
                     try:
-                        chat_profile = profile_csv(chat_tmp_path)
+                        chat_df = load_data_file(chat_tmp_path)
+                        chat_profile = profile_dataframe(chat_df)
                         chat_result = answer_data_question(
                             chat_profile,
                             chat_tmp_path,
@@ -295,12 +391,13 @@ if "result" in st.session_state:
         sql_question = st.text_input("e.g. \"What is the average price by category?\"", key="sql_question_input")
         if st.button("Run SQL query") and sql_question:
             with st.spinner("Writing and running SQL..."):
-                with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
+                sql_suffix = st.session_state.get("uploaded_file_extension", ".csv")
+                with tempfile.NamedTemporaryFile(mode="wb", suffix=sql_suffix, delete=False) as tmp:
                     tmp.write(st.session_state["uploaded_bytes"])
                     sql_tmp_path = tmp.name
 
                 try:
-                    sql_df = load_csv(sql_tmp_path)
+                    sql_df = load_data_file(sql_tmp_path)
                     sql_result = answer_sql_question(sql_df, sql_question)
                 finally:
                     os.remove(sql_tmp_path)

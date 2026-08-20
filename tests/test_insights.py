@@ -18,6 +18,7 @@ SAMPLE_CSV = "data/samples/sample_sales.csv"
 EXPECTED_KEYS = {
     "success", "insights", "charts", "error", "attempts",
     "data_quality", "plan", "auto_eda_charts", "anomalies", "statistical_tests",
+    "cleaning", "forecast", "report_path",
 }
 
 
@@ -49,6 +50,14 @@ def test_analyze_csv_file_success_path_has_expected_shape():
     assert result["plan"]["goal"] == "Understand pricing and category patterns."
     assert isinstance(result["auto_eda_charts"], list)
     assert len(result["auto_eda_charts"]) > 0  # sample_sales.csv has numeric + missing data
+    assert result["cleaning"] is not None
+    assert isinstance(result["cleaning"]["suggestions"], list)
+    assert isinstance(result["cleaning"]["log"], list)
+    assert result["forecast"] is not None
+    assert "ran" in result["forecast"]
+    assert result["report_path"] is not None
+    import os
+    assert os.path.exists(result["report_path"])
 
 
 def test_analyze_csv_file_missing_file_returns_clean_error():
@@ -60,7 +69,10 @@ def test_analyze_csv_file_missing_file_returns_clean_error():
     assert result["auto_eda_charts"] == []
     assert result["anomalies"] is None
     assert result["statistical_tests"] is None
-    assert "Could not read the CSV file" in result["error"]
+    assert result["cleaning"] is None
+    assert result["forecast"] is None
+    assert result["report_path"] is None
+    assert "Could not read the data file" in result["error"]
     assert result["insights"] == []
     assert result["charts"] == []
 

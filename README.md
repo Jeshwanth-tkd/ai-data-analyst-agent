@@ -620,6 +620,159 @@ itself isn't built until Phase 4.
   proving the read-only connection rejects a write with zero scanner
   involvement at all.
 
+### Phase 23 — Multi-format Ingestion ✅
+- **Uploads are no longer CSV-only.** `app/ingestion/csv_profiler.py`
+  gains `load_data_file()`, a dispatcher that routes Excel (`.xlsx`/`.xls`),
+  JSON (`.json`), and Parquet (`.parquet`) files to their own loaders
+  (`pd.read_excel`/`read_json`/`read_parquet`), alongside the original,
+  unchanged `load_csv()`. Every format gets the identical size-cap and
+  empty-check safety guarantees — factored into shared `_enforce_size_cap()`
+  / `_reject_if_empty()` helpers rather than reimplemented per format.
+- **A real bug caught by testing, not just the ingestion layer:** the
+  self-correction loop's subprocess wrapper (`code_executor.py`'s
+  `run_code()`) hardcoded `pd.read_csv(...)` as the very first line of
+  every generated script — so an Excel/JSON/Parquet upload would load
+  fine at the profiling stage but then crash on attempt 1 of the LLM
+  loop, retry, and crash identically 3 more times (the failure is in the
+  fixed wrapper preamble, before any LLM-generated code runs, so no
+  amount of "fixing" the generated code could ever help). Caught by an
+  end-to-end replay test that ran the *actual* mocked-Groq pipeline
+  against real `.xlsx`/`.json`/`.parquet` sample files, not just a direct
+  call to the ingestion function. Fixed with `_build_load_statement()`,
+  which dispatches the wrapper's load line by extension the same way
+  `load_data_file()` does.
+- **The Streamlit UI's file uploader, chat rebuild, and SQL Analyst
+  rebuild** all updated to preserve the original upload's file extension
+  (kept in `session_state` alongside the raw bytes) rather than assuming
+  `.csv` for every temp file they write.
+- **Verified before shipping:** unit tests for every new loader (happy
+  path, corrupt file, oversized file, empty-after-load, unsupported
+  extension) and for the subprocess wrapper's load-statement dispatch,
+  plus a full pipeline replay (ingestion → planning → code generation →
+  execution → charts → anomalies → stats) against real sample files in
+  all three new formats, plus a headless Streamlit boot check.
+
+### Phase 24 — Data Cleaning Agent ✅
+- **`app/cleaning/data_cleaning.py`** turns Phase 12's deterministic
+  quality report into concrete, human-readable suggestions:
+  `suggest_cleaning_actions()` never touches the data, so it's always
+  safe to compute and show; `apply_cleaning_actions()` is a separate,
+  explicit step that performs a conservative auto-applied subset (fill
+  missing numeric values with the column median, fill missing
+  categorical values with `"Unknown"`, drop exact-duplicate rows,
+  standardize inconsistent category spellings to the most common
+  original casing) on a **copy** of the DataFrame — the caller's
+  original data is never mutated.
+- **Column drops stay suggestion-only, on purpose.** Constant columns and
+  ID-like columns are flagged (`auto_applied: False`) but never dropped
+  automatically — removing a whole column is a much higher-risk, harder-
+  to-undo decision than filling a missing value, so it's surfaced for a
+  human to decide rather than done silently.
+- **Wired into `analyze_csv_file()`** as a new `"cleaning"` key
+  (`{"suggestions": [...], "log": [...], "cleaned_csv_path": str|None}`),
+  computed the same deterministic way as the other reports. When
+  anything was actually auto-applied, the cleaned data is saved to
+  `outputs/cleaned_data.csv` so the UI can offer it as a download.
+- **Streamlit UI** gets a "Cleaning Suggestions" expander: auto-applied
+  actions and manual-review-only suggestions are visually distinguished,
+  the plain-language change log is shown, and a "Download cleaned CSV"
+  button appears whenever cleaning actually changed something.
+- **Verified before shipping:** unit tests for every suggestion type
+  (numeric/categorical fills, duplicates, inconsistent categories,
+  constant/ID-like columns staying suggestion-only) and every apply
+  action, plus an explicit test proving the original DataFrame is never
+  mutated, a full pipeline replay against real messy data, and a headless
+  Streamlit boot check.
+
+### Phase 25 — Forecasting ✅
+- **`app/forecasting/forecasting.py`** auto-detects a date-like column
+  and a numeric column, then forecasts the next several periods forward
+  using Holt's linear trend method (`statsmodels`'
+  `ExponentialSmoothing(trend="add", seasonal=None)`) — a deliberately
+  simple, well-understood default chosen because reliably detecting a
+  seasonal period on an arbitrary, possibly short, possibly
+  irregular-frequency dataset is a much harder, more fragile problem,
+  out of scope for this phase. A **naive baseline** (repeat the last
+  observed value) is always shown alongside the model's forecast, so a
+  viewer can judge whether the trend model is adding anything over
+  "just guess the last number again," rather than presenting the
+  model's output as unquestionably better.
+- **A real design bug caught only by full-pipeline testing, not the
+  module's own unit tests:** the module was first wired up to exclude
+  Phase 12's "id-like columns" (>95% unique values) from its numeric
+  candidate pool, mirroring how `eda_summary`/`anomalies`/
+  `statistical_tests` already reuse that exclusion. That looked
+  consistent in isolation, but a full-pipeline replay against a real
+  daily time-series sample showed forecasting silently refusing to run
+  — the one numeric metric column in the dataset (a continuous value,
+  naturally >95% unique) was itself getting excluded as "id-like."
+  Fixed by *not* reusing that exclusion for forecasting's numeric
+  candidate at all; only genuinely constant (zero-variance) columns are
+  excluded now, since date-shaped and continuous-metric columns are
+  both routinely near-100%-unique by nature, which is precisely the
+  shape forecasting needs, not junk to discard.
+- **Every failure path returns a clean `{"ran": False, "reason": ...}`**
+  rather than raising or crashing the rest of the pipeline — no date
+  column found, too few historical points (fewer than 5 distinct
+  dates), or an unexpected model-fit error. Most datasets in this
+  project (e.g. `sample_sales.csv`, one row per near-unique date) simply
+  aren't meaningful time series, so `"ran": False` is the normal,
+  expected outcome for them, not an error state shown to the user.
+- **Wired into `analyze_csv_file()`** as a new `"forecast"` key and into
+  the Streamlit UI as a "Forecast" expander (chart + a table of
+  predicted values vs. the naive baseline), shown only when a forecast
+  actually ran.
+- **Verified before shipping:** unit tests for detection (date+numeric
+  found, no date column, no numeric column, exclude_columns behavior),
+  the too-few-points and no-date failure paths, multi-row-per-date
+  averaging, and a real forecast's shape/chart validity; a full pipeline
+  replay against a real synthetic 60-day sales dataset
+  (`data/samples/daily_sales_timeseries.csv`) that's what actually
+  caught the id-like-exclusion bug above; and a headless Streamlit boot
+  check.
+
+### Phase 26 — Report Generation ✅
+- **`app/report/report_generator.py`** bundles `analyze_csv_file()`'s
+  entire result dict — insights, every chart, data quality, the agent's
+  plan, automatic EDA, anomalies, statistical tests, cleaning
+  suggestions, and forecast — into **one self-contained HTML file**.
+  Every chart image is embedded directly as a base64 `data:` URI, not
+  linked to a separate file, so the report is genuinely portable: one
+  file that opens correctly as an email attachment, on a USB drive, or
+  fully offline, with no broken image links.
+- **A deliberate format decision, not a default fallen into:** HTML,
+  not PDF. PDF-via-pandoc+LaTeX and PDF-via-weasyprint were both
+  considered and rejected — both need a heavy system dependency (a full
+  TeX Live install, or Cairo/Pango) that's slow and risky to add to
+  Streamlit Community Cloud's free-tier build environment. A
+  self-contained HTML file achieves the same practical "one shareable
+  file with everything embedded" goal without that deployment risk —
+  and a user who wants a literal PDF can still print the HTML to one
+  from any browser.
+- **Every section is conditional** on the data actually being present —
+  the same report generator produces a clean, complete document whether
+  the run fully succeeded, only the LLM step failed, or ingestion itself
+  failed, mirroring the "renders unconditionally" pattern already used
+  throughout the Streamlit UI.
+- **User-supplied text (insight strings, error messages, column names)
+  is HTML-escaped** before being embedded in the report — verified with
+  a dedicated test asserting a literal `<script>` tag in an insight
+  string comes out escaped, not executable, in the rendered HTML.
+- **Wired into `analyze_csv_file()`** as a new `"report_path"` key
+  (generated last, wrapped in its own try/except so a report-writing
+  failure can never take down an otherwise-successful analysis) and into
+  the Streamlit UI as a "Download full report (HTML)" button.
+- **Verified before shipping:** unit tests confirming no external
+  `http(s)` references exist anywhere in the output (genuine
+  self-containment, not just "usually works online"), every section
+  appears/disappears correctly based on the input data, the HTML-escaping
+  test above, a real chart file round-tripped through the embedder and
+  confirmed as a base64 `data:` URI with the original file path never
+  leaking into the report, a full pipeline replay producing and
+  visually inspecting a real rendered report (via a headless-browser
+  screenshot) against the daily-sales time-series sample, and a headless
+  Streamlit boot check.
+
 ## Tech stack
 
 - **LLM**: [Groq](https://console.groq.com/) free API (fast inference, no cost)
@@ -628,6 +781,10 @@ itself isn't built until Phase 4.
 - **Also included, not currently deployed**: FastAPI backend (`main.py`) and
   a `Dockerfile`, kept as working standalone artifacts (Phase 7 / Phase 10)
 - **Hosting**: [Streamlit Community Cloud](https://streamlit.io/cloud) (free)
+- **File formats**: CSV, Excel (`openpyxl`), JSON, and Parquet (`pyarrow`)
+  — Phase 23
+- **Forecasting**: `statsmodels` (Holt's linear trend / Exponential
+  Smoothing) — Phase 25
 - **Testing / CI**: pytest, GitHub Actions (Phase 15)
 - **Structured outputs**: Pydantic (Phase 17's `AnalysisPlan`)
 - **ML / stats**: scikit-learn (Phase 20's `IsolationForest`), SciPy (Phase 21's t-test/ANOVA)
