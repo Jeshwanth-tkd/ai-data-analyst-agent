@@ -17,8 +17,32 @@ scaffolding it all at once — the full phase-by-phase build log is below.
 
 ## Screenshots
 
-*(Updated screenshots coming soon — the ones previously here were from the
-original 11-phase MVP and no longer reflect the current UI.)*
+**Upload and Data Health**
+
+![Upload page](screenshots/Screenshot%202026-08-20%20142311.png)
+![Data Health score after upload](screenshots/Screenshot%202026-08-20%20142812.png)
+
+**Agent's Plan and structural notes**
+
+![Agent's Plan](screenshots/Screenshot%202026-08-20%20142828.png)
+![Structural notes](screenshots/Screenshot%202026-08-20%20142846.png)
+
+**Automatic EDA**
+
+![Automatic EDA — distribution chart](screenshots/Screenshot%202026-08-20%20142908.png)
+![Automatic EDA — correlation heatmap](screenshots/Screenshot%202026-08-20%20142937.png)
+
+**Cleaning agent and forecasting**
+
+![Cleaning Suggestions](screenshots/Screenshot%202026-08-20%20143009.png)
+![Forecast chart](screenshots/Screenshot%202026-08-20%20143027.png)
+![Forecast table and Statistical Tests](screenshots/Screenshot%202026-08-20%20143040.png)
+
+**Insights and chart carousel**
+
+![Insights](screenshots/Screenshot%202026-08-20%20143056.png)
+![Chart carousel — orders per day](screenshots/Screenshot%202026-08-20%20143106.png)
+![Chart carousel, chat follow-up, and SQL Analyst](screenshots/Screenshot%202026-08-20%20143201.png)
 
 ## What it does
 
